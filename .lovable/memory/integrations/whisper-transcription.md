@@ -1,6 +1,6 @@
 ---
 name: Whisper transcription
-description: Audio message transcription using OpenAI Whisper with Gemini fallback in message-grouper
+description: Audio message transcription using OpenAI Whisper with Gemini fallback in message-grouper, plus Nina agent context delivery
 type: integration
 ---
 
@@ -18,13 +18,22 @@ Audio messages from WhatsApp (via Evolution API or WhatsApp Official) are transc
 ## Storage
 Each transcribed audio writes to `messages`:
 - `content` = transcription text (Nina reads from here — keep populated for backwards compatibility).
-- `metadata.transcription = { text, provider: 'whisper' | 'gemini', transcribed_at }` — used by the chat UI to display the transcription block under the audio player.
+- `metadata.transcription = { text, provider: 'whisper' | 'gemini' | 'failed', transcribed_at }`.
+- `provider: 'failed'` is used when Evolution download or both transcription providers fail; UI shows "Transcrição indisponível".
+
+## Nina orchestrator integration (CRITICAL)
+`supabase/functions/nina-orchestrator/index.ts` MUST give the agent full audio context:
+
+1. `getMessageTextForAgent(message)` extracts `metadata.transcription.text` (falling back to `content`/`combined_content`).
+2. History mapping prepends `[Mensagem enviada por áudio — transcrita]\n` to user messages where `type === 'audio'` and a transcription exists. This signals modality without hiding content.
+3. The system prompt ALWAYS includes a `<audio_capabilities priority="critical-override">` block PREPENDED BEFORE the user-defined prompt AND a reminder appended AFTER. This is required because user-defined prompts (like default Nina) may declare the agent is "text-only", which the model would otherwise honor and refuse audio context. The override forbids phrases like "não consigo processar áudios", "comunicação é só por texto", etc.
 
 ## UI
-`src/components/ChatInterface.tsx` renders the transcription block beneath the audio player using `renderTranscription(msg)`. Shows `Transcrevendo…` for audios under 60s old without transcription yet.
+`src/components/ChatInterface.tsx` renders the transcription block beneath the audio player using `renderTranscription(msg)`. Shows `Transcrevendo…` for audios under 30s old without transcription yet, and "Transcrição indisponível" for `provider: 'failed'`.
 
 ## Logs to grep when debugging
 - `[whisper] success`
 - `[whisper] failed, falling back to gemini`
 - `[whisper] no OPENAI_API_KEY configured`
 - `[gemini] success (fallback)`
+- `[Nina] Effective incoming content:` — confirms transcription reached the agent prompt
