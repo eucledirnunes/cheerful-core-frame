@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Search, MoreVertical, Phone, Paperclip, Send, Check, CheckCheck, 
   Smile, Play, Loader2, MessageSquare, Info, X, Mail, 
-  Tag, Bot, User, Pause, Brain, Plus, Copy, Ban, PhoneOff, UserCheck, Wifi, Zap
+  Tag, Bot, User, Pause, Brain, Plus, Copy, Ban, PhoneOff, UserCheck, Wifi, Zap, FileText
 } from 'lucide-react';
 import { MessageDirection, MessageType, UIConversation, UIMessage, ConversationStatus, TagDefinition } from '../types';
 import { Button } from './Button';
@@ -313,85 +313,126 @@ const ChatInterface: React.FC = () => {
       };
 
       return (
-        <div className="flex items-center gap-3 min-w-[220px] py-1">
-          <audio
-            ref={el => { if (el) audioRefs.current[msg.id] = el; }}
-            src={msg.mediaUrl!}
-            preload="metadata"
-            onLoadedMetadata={(e) => {
-              const audio = e.currentTarget;
-              setAudioDurations(prev => ({ ...prev, [msg.id]: audio.duration }));
-            }}
-            onTimeUpdate={(e) => {
-              const audio = e.currentTarget;
-              setAudioProgress(prev => ({ ...prev, [msg.id]: audio.currentTime }));
-            }}
-            onEnded={() => setPlayingAudioId(null)}
-          />
-          
-          <button 
-            onClick={togglePlay}
-            disabled={!isAudioReady}
-            className={`flex items-center justify-center w-9 h-9 rounded-full transition-all shadow-md flex-shrink-0 ${
-              !isAudioReady
-                ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white/20' : 'bg-muted')
-                : msg.direction === MessageDirection.OUTGOING 
-                  ? 'bg-white text-primary hover:bg-primary/10' 
-                  : 'bg-primary text-white hover:bg-primary/90'
-            }`}
-          >
-            {!isAudioReady ? (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-            ) : isPlaying ? (
-              <Pause className="w-3.5 h-3.5 fill-current" />
-            ) : (
-              <Play className="w-3.5 h-3.5 ml-0.5 fill-current" />
-            )}
-          </button>
-          
-          <div className="flex-1 flex flex-col gap-1 justify-center h-9">
-            {/* Waveform-style progress bar */}
-            <div 
-              className={`relative h-[18px] flex items-center gap-[2px] cursor-pointer`}
-              onClick={(e) => {
-                const audio = audioRefs.current[msg.id];
-                if (!audio || !duration) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                const percent = (e.clientX - rect.left) / rect.width;
-                audio.currentTime = percent * duration;
+        <div className="flex flex-col min-w-[220px] py-1">
+          <div className="flex items-center gap-3">
+            <audio
+              ref={el => { if (el) audioRefs.current[msg.id] = el; }}
+              src={msg.mediaUrl!}
+              preload="metadata"
+              onLoadedMetadata={(e) => {
+                const audio = e.currentTarget;
+                setAudioDurations(prev => ({ ...prev, [msg.id]: audio.duration }));
               }}
+              onTimeUpdate={(e) => {
+                const audio = e.currentTarget;
+                setAudioProgress(prev => ({ ...prev, [msg.id]: audio.currentTime }));
+              }}
+              onEnded={() => setPlayingAudioId(null)}
+            />
+            
+            <button 
+              onClick={togglePlay}
+              disabled={!isAudioReady}
+              className={`flex items-center justify-center w-9 h-9 rounded-full transition-all shadow-md flex-shrink-0 ${
+                !isAudioReady
+                  ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white/20' : 'bg-muted')
+                  : msg.direction === MessageDirection.OUTGOING 
+                    ? 'bg-white text-primary hover:bg-primary/10' 
+                    : 'bg-primary text-white hover:bg-primary/90'
+              }`}
             >
-              {/* Generate waveform bars */}
-              {Array.from({ length: 28 }).map((_, i) => {
-                const barPercent = (i / 28) * 100;
-                const isActive = barPercent < progressPercent;
-                // Pseudo-random heights for waveform effect
-                const heights = [40, 65, 50, 85, 70, 55, 90, 60, 75, 45, 80, 55, 95, 65, 50, 70, 85, 45, 60, 90, 55, 75, 50, 80, 65, 45, 70, 55];
-                const h = heights[i % heights.length];
-                return (
-                  <div
-                    key={i}
-                    className={`flex-1 rounded-full transition-colors duration-150 ${
-                      isActive
-                        ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white' : 'bg-primary')
-                        : (msg.direction === MessageDirection.OUTGOING ? 'bg-white/30' : 'bg-muted-foreground/25')
-                    }`}
-                    style={{ height: `${h}%` }}
-                  />
-                );
-              })}
+              {!isAudioReady ? (
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              ) : isPlaying ? (
+                <Pause className="w-3.5 h-3.5 fill-current" />
+              ) : (
+                <Play className="w-3.5 h-3.5 ml-0.5 fill-current" />
+              )}
+            </button>
+            
+            <div className="flex-1 flex flex-col gap-1 justify-center h-9">
+              {/* Waveform-style progress bar */}
+              <div 
+                className={`relative h-[18px] flex items-center gap-[2px] cursor-pointer`}
+                onClick={(e) => {
+                  const audio = audioRefs.current[msg.id];
+                  if (!audio || !duration) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const percent = (e.clientX - rect.left) / rect.width;
+                  audio.currentTime = percent * duration;
+                }}
+              >
+                {/* Generate waveform bars */}
+                {Array.from({ length: 28 }).map((_, i) => {
+                  const barPercent = (i / 28) * 100;
+                  const isActive = barPercent < progressPercent;
+                  const heights = [40, 65, 50, 85, 70, 55, 90, 60, 75, 45, 80, 55, 95, 65, 50, 70, 85, 45, 60, 90, 55, 75, 50, 80, 65, 45, 70, 55];
+                  const h = heights[i % heights.length];
+                  return (
+                    <div
+                      key={i}
+                      className={`flex-1 rounded-full transition-colors duration-150 ${
+                        isActive
+                          ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white' : 'bg-primary')
+                          : (msg.direction === MessageDirection.OUTGOING ? 'bg-white/30' : 'bg-muted-foreground/25')
+                      }`}
+                      style={{ height: `${h}%` }}
+                    />
+                  );
+                })}
+              </div>
+              <span className={`text-[10px] font-medium ${
+                msg.direction === MessageDirection.OUTGOING ? 'text-primary-foreground/80' : 'text-muted-foreground'
+              }`}>
+                {isPlaying || progress > 0 ? formatAudioTime(progress) : formatAudioTime(duration)} {duration > 0 ? `/ ${formatAudioTime(duration)}` : ''}
+              </span>
             </div>
-            <span className={`text-[10px] font-medium ${
-              msg.direction === MessageDirection.OUTGOING ? 'text-primary-foreground/80' : 'text-muted-foreground'
-            }`}>
-              {isPlaying || progress > 0 ? formatAudioTime(progress) : formatAudioTime(duration)} {duration > 0 ? `/ ${formatAudioTime(duration)}` : ''}
-            </span>
           </div>
+          {renderTranscription(msg)}
         </div>
       );
     }
 
     return <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>;
+  };
+
+  const renderTranscription = (msg: UIMessage) => {
+    const isOutgoing = msg.direction === MessageDirection.OUTGOING;
+    if (msg.transcription?.text) {
+      return (
+        <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-start gap-2`}>
+          <FileText className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className={`text-[10px] uppercase tracking-wide font-medium ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                Transcrição
+              </span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded ${isOutgoing ? 'bg-primary-foreground/15 text-primary-foreground/80' : 'bg-muted text-muted-foreground'}`}>
+                {msg.transcription.provider}
+              </span>
+            </div>
+            <p className={`text-xs italic leading-snug whitespace-pre-wrap ${isOutgoing ? 'text-primary-foreground/85' : 'text-muted-foreground'}`}>
+              {msg.transcription.text}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Show "Transcrevendo..." for recent audios (< 60s) without transcription yet
+    const createdAt = msg.createdAt ? new Date(msg.createdAt).getTime() : null;
+    const ageSec = createdAt ? (Date.now() - createdAt) / 1000 : Infinity;
+    if (ageSec < 60) {
+      return (
+        <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-center gap-2`}>
+          <Loader2 className={`w-3 h-3 animate-spin ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} />
+          <span className={`text-[11px] italic ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+            Transcrevendo…
+          </span>
+        </div>
+      );
+    }
+    return null;
   };
 
   if (loading) {
