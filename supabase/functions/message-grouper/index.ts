@@ -435,8 +435,9 @@ async function downloadEvolutionMedia(
       ? instance.instance_id_external
       : instance.instance_name;
 
-    // Get base64 media from Evolution API
-    const response = await fetch(`${secrets.api_url}/chat/getBase64FromMediaMessage/${instanceIdentifier}`, {
+    // Get base64 media from Evolution API (strip trailing slash from api_url to avoid // in path)
+    const baseUrl = (secrets.api_url || '').replace(/\/+$/, '');
+    const response = await fetch(`${baseUrl}/chat/getBase64FromMediaMessage/${instanceIdentifier}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
