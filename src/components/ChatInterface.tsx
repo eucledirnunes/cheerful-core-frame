@@ -313,80 +313,80 @@ const ChatInterface: React.FC = () => {
       };
 
       return (
-        <div className="flex items-center gap-3 min-w-[220px] py-1">
-          <audio
-            ref={el => { if (el) audioRefs.current[msg.id] = el; }}
-            src={msg.mediaUrl!}
-            preload="metadata"
-            onLoadedMetadata={(e) => {
-              const audio = e.currentTarget;
-              setAudioDurations(prev => ({ ...prev, [msg.id]: audio.duration }));
-            }}
-            onTimeUpdate={(e) => {
-              const audio = e.currentTarget;
-              setAudioProgress(prev => ({ ...prev, [msg.id]: audio.currentTime }));
-            }}
-            onEnded={() => setPlayingAudioId(null)}
-          />
-          
-          <button 
-            onClick={togglePlay}
-            disabled={!isAudioReady}
-            className={`flex items-center justify-center w-9 h-9 rounded-full transition-all shadow-md flex-shrink-0 ${
-              !isAudioReady
-                ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white/20' : 'bg-muted')
-                : msg.direction === MessageDirection.OUTGOING 
-                  ? 'bg-white text-primary hover:bg-primary/10' 
-                  : 'bg-primary text-white hover:bg-primary/90'
-            }`}
-          >
-            {!isAudioReady ? (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-            ) : isPlaying ? (
-              <Pause className="w-3.5 h-3.5 fill-current" />
-            ) : (
-              <Play className="w-3.5 h-3.5 ml-0.5 fill-current" />
-            )}
-          </button>
-          
-          <div className="flex-1 flex flex-col gap-1 justify-center h-9">
-            {/* Waveform-style progress bar */}
-            <div 
-              className={`relative h-[18px] flex items-center gap-[2px] cursor-pointer`}
-              onClick={(e) => {
-                const audio = audioRefs.current[msg.id];
-                if (!audio || !duration) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                const percent = (e.clientX - rect.left) / rect.width;
-                audio.currentTime = percent * duration;
+        <div className="flex flex-col min-w-[220px] py-1">
+          <div className="flex items-center gap-3">
+            <audio
+              ref={el => { if (el) audioRefs.current[msg.id] = el; }}
+              src={msg.mediaUrl!}
+              preload="metadata"
+              onLoadedMetadata={(e) => {
+                const audio = e.currentTarget;
+                setAudioDurations(prev => ({ ...prev, [msg.id]: audio.duration }));
               }}
+              onTimeUpdate={(e) => {
+                const audio = e.currentTarget;
+                setAudioProgress(prev => ({ ...prev, [msg.id]: audio.currentTime }));
+              }}
+              onEnded={() => setPlayingAudioId(null)}
+            />
+            
+            <button 
+              onClick={togglePlay}
+              disabled={!isAudioReady}
+              className={`flex items-center justify-center w-9 h-9 rounded-full transition-all shadow-md flex-shrink-0 ${
+                !isAudioReady
+                  ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white/20' : 'bg-muted')
+                  : msg.direction === MessageDirection.OUTGOING 
+                    ? 'bg-white text-primary hover:bg-primary/10' 
+                    : 'bg-primary text-white hover:bg-primary/90'
+              }`}
             >
-              {/* Generate waveform bars */}
-              {Array.from({ length: 28 }).map((_, i) => {
-                const barPercent = (i / 28) * 100;
-                const isActive = barPercent < progressPercent;
-                // Pseudo-random heights for waveform effect
-                const heights = [40, 65, 50, 85, 70, 55, 90, 60, 75, 45, 80, 55, 95, 65, 50, 70, 85, 45, 60, 90, 55, 75, 50, 80, 65, 45, 70, 55];
-                const h = heights[i % heights.length];
-                return (
-                  <div
-                    key={i}
-                    className={`flex-1 rounded-full transition-colors duration-150 ${
-                      isActive
-                        ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white' : 'bg-primary')
-                        : (msg.direction === MessageDirection.OUTGOING ? 'bg-white/30' : 'bg-muted-foreground/25')
-                    }`}
-                    style={{ height: `${h}%` }}
-                  />
-                );
-              })}
+              {!isAudioReady ? (
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              ) : isPlaying ? (
+                <Pause className="w-3.5 h-3.5 fill-current" />
+              ) : (
+                <Play className="w-3.5 h-3.5 ml-0.5 fill-current" />
+              )}
+            </button>
+            
+            <div className="flex-1 flex flex-col gap-1 justify-center h-9">
+              {/* Waveform-style progress bar */}
+              <div 
+                className={`relative h-[18px] flex items-center gap-[2px] cursor-pointer`}
+                onClick={(e) => {
+                  const audio = audioRefs.current[msg.id];
+                  if (!audio || !duration) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const percent = (e.clientX - rect.left) / rect.width;
+                  audio.currentTime = percent * duration;
+                }}
+              >
+                {/* Generate waveform bars */}
+                {Array.from({ length: 28 }).map((_, i) => {
+                  const barPercent = (i / 28) * 100;
+                  const isActive = barPercent < progressPercent;
+                  const heights = [40, 65, 50, 85, 70, 55, 90, 60, 75, 45, 80, 55, 95, 65, 50, 70, 85, 45, 60, 90, 55, 75, 50, 80, 65, 45, 70, 55];
+                  const h = heights[i % heights.length];
+                  return (
+                    <div
+                      key={i}
+                      className={`flex-1 rounded-full transition-colors duration-150 ${
+                        isActive
+                          ? (msg.direction === MessageDirection.OUTGOING ? 'bg-white' : 'bg-primary')
+                          : (msg.direction === MessageDirection.OUTGOING ? 'bg-white/30' : 'bg-muted-foreground/25')
+                      }`}
+                      style={{ height: `${h}%` }}
+                    />
+                  );
+                })}
+              </div>
+              <span className={`text-[10px] font-medium ${
+                msg.direction === MessageDirection.OUTGOING ? 'text-primary-foreground/80' : 'text-muted-foreground'
+              }`}>
+                {isPlaying || progress > 0 ? formatAudioTime(progress) : formatAudioTime(duration)} {duration > 0 ? `/ ${formatAudioTime(duration)}` : ''}
+              </span>
             </div>
-            <span className={`text-[10px] font-medium ${
-              msg.direction === MessageDirection.OUTGOING ? 'text-primary-foreground/80' : 'text-muted-foreground'
-            }`}>
-              {isPlaying || progress > 0 ? formatAudioTime(progress) : formatAudioTime(duration)} {duration > 0 ? `/ ${formatAudioTime(duration)}` : ''}
-            </span>
-          </div>
           </div>
           {renderTranscription(msg)}
         </div>
