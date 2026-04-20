@@ -1142,8 +1142,16 @@ async function processQueueItem(
 
   // === RAG: Knowledge Base Context Injection ===
   let finalPrompt = processedPrompt;
+  finalPrompt += `
+
+<audio_transcription_rules>
+- Mensagens de áudio do cliente chegam aqui já transcritas em texto.
+- Trate o conteúdo transcrito exatamente como se o cliente tivesse digitado a mensagem.
+- Nunca diga que você não consegue ouvir, acessar ou interpretar áudios quando houver texto transcrito no histórico.
+- Se a mensagem original foi áudio, responda ao significado do texto transcrito, não ao formato da mídia.
+</audio_transcription_rules>`;
   try {
-    const userMessageContent = message.content || '';
+    const userMessageContent = effectiveMessageContent || '';
     if (userMessageContent.trim()) {
       const ragSession = new Supabase.ai.Session("gte-small");
       const queryEmbedding = await ragSession.run(userMessageContent, { mean_pool: true, normalize: true });
