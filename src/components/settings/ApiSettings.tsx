@@ -24,6 +24,7 @@ interface NinaSettings {
   audio_response_enabled: boolean;
   evolution_api_url: string | null;
   evolution_api_key: string | null;
+  openai_api_key: string | null;
 }
 
 const VOICE_OPTIONS = [
@@ -121,7 +122,12 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
     audio_response_enabled: false,
     evolution_api_url: null,
     evolution_api_key: null,
+    openai_api_key: null,
   });
+
+  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
+  const [openaiTesting, setOpenaiTesting] = useState(false);
+  const [openaiTestResult, setOpenaiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Auto-save ElevenLabs API key when field loses focus
   const handleElevenLabsKeyBlur = async () => {
@@ -223,6 +229,7 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
         audio_response_enabled: data.audio_response_enabled || false,
         evolution_api_url: (data as any).evolution_api_url ?? null,
         evolution_api_key: (data as any).evolution_api_key ?? null,
+        openai_api_key: (data as any).openai_api_key ?? null,
       });
     } catch (error) {
       console.error('[ApiSettings] Error loading settings:', error);
@@ -258,6 +265,7 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
           audio_response_enabled: settings.audio_response_enabled,
           evolution_api_url: settings.evolution_api_url,
           evolution_api_key: settings.evolution_api_key,
+          openai_api_key: settings.openai_api_key,
           updated_at: new Date().toISOString(),
         } as any)
         .eq('id', settings.id!);
