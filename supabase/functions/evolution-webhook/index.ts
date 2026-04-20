@@ -58,7 +58,7 @@ serve(async (req) => {
     // Buscar instância por instance_name ou instance_id_external
     let { data: instanceData } = await supabase
       .from('whatsapp_instances')
-      .select('id, instance_name, instance_id_external, provider_type, status, user_id')
+      .select('id, instance_name, instance_id_external, provider_type, status, user_id, metadata')
       .eq('instance_name', payload.instance)
       .maybeSingle();
 
@@ -66,7 +66,7 @@ serve(async (req) => {
       // Fallback para instance_id_external (Evolution Cloud envia UUID)
       const { data: cloudInstance } = await supabase
         .from('whatsapp_instances')
-        .select('id, instance_name, instance_id_external, provider_type, status, user_id')
+        .select('id, instance_name, instance_id_external, provider_type, status, user_id, metadata')
         .eq('instance_id_external', payload.instance)
         .maybeSingle();
       instanceData = cloudInstance;
@@ -159,14 +159,40 @@ async function processMessageUpsert(
   // Prioridade para resolver número real quando @lid:
   // 1. remoteJidAlt (presente no payload da Evolution API v2+)
   // 2. senderPn (campo legado de versões anteriores)
-  // 3. remoteJid como fallback (vai salvar o @lid, mas é melhor que nada)
+  // 3. Cache em contacts.metadata.lid_aliases (LID já resolvido antes)
+  // 4. Lookup ativo via Evolution API (chat/findContacts, chat/findChats)
+  // 5. remoteJid como último fallback (vai salvar o @lid)
   let whatsappId: string;
+  let resolutionStrategy = 'remoteJid';
+  
   if (isLid && messageData.key.remoteJidAlt) {
     whatsappId = messageData.key.remoteJidAlt;
-    console.log(`[evolution-webhook] @lid detected - using remoteJidAlt as real number: ${whatsappId}`);
+    resolutionStrategy = 'remoteJidAlt';
+    console.log(`[evolution-webhook] @lid detected - using remoteJidAlt: ${whatsappId}`);
   } else if (isLid && messageData.senderPn) {
     whatsappId = messageData.senderPn;
-    console.log(`[evolution-webhook] @lid detected - using senderPn as real number: ${whatsappId}`);
+    resolutionStrategy = 'senderPn';
+    console.log(`[evolution-webhook] @lid detected - using senderPn: ${whatsappId}`);
+  } else if (isLid) {
+    // Tentar cache primeiro
+    const cached = await findContactByLidCache(supabase, remoteJid);
+    if (cached) {
+      whatsappId = cached.whatsapp_id || `${cached.phone_number}@s.whatsapp.net`;
+      resolutionStrategy = 'lid-cache';
+      console.log(`[evolution-webhook] @lid detected - resolved via cache: ${whatsappId} (contact ${cached.id})`);
+    } else {
+      // Tentar via API da Evolution
+      const resolved = await resolveLidToRealNumber(remoteJid, instance, supabase);
+      if (resolved) {
+        whatsappId = resolved;
+        resolutionStrategy = 'lid-api-resolve';
+        console.log(`[evolution-webhook] @lid detected - resolved via Evolution API: ${whatsappId}`);
+      } else {
+        whatsappId = remoteJid;
+        resolutionStrategy = 'lid-fallback';
+        console.warn(`[evolution-webhook] @lid detected but could NOT resolve - falling back to LID: ${whatsappId}`);
+      }
+    }
   } else {
     whatsappId = remoteJid;
   }
@@ -175,7 +201,7 @@ async function processMessageUpsert(
   const phoneNumber = whatsappId.replace('@s.whatsapp.net', '').replace('@lid', '');
   const contactName = messageData.pushName || phoneNumber;
 
-  console.log(`[evolution-webhook] Processing message - phoneNumber: ${phoneNumber}, whatsappId: ${whatsappId}, isLid: ${isLid}, remoteJid: ${remoteJid}, remoteJidAlt: ${messageData.key.remoteJidAlt || 'N/A'}, senderPn: ${messageData.senderPn || 'N/A'}`);
+  console.log(`[evolution-webhook] Resolved phoneNumber=${phoneNumber}, whatsappId=${whatsappId}, strategy=${resolutionStrategy}, remoteJid=${remoteJid}`);
 
   // Verificar se contato já existe
   let { data: contact } = await supabase
@@ -225,6 +251,11 @@ async function processMessageUpsert(
       .eq('id', contact.id);
       
     console.log('[evolution-webhook] Updated existing contact (preserved whatsapp_id):', contact.id);
+  }
+
+  // Cachear LID -> contato em client_memory.lid_aliases para resoluções futuras
+  if (isLid && (resolutionStrategy === 'remoteJidAlt' || resolutionStrategy === 'senderPn' || resolutionStrategy === 'lid-api-resolve')) {
+    await cacheLidAlias(supabase, contact, remoteJid);
   }
 
   // Fix 1: Buscar conversa ativa sem filtro de instance_id para evitar duplicatas
@@ -376,13 +407,21 @@ async function saveOutgoingMessage(
     return;
   }
 
-  // Resolver número do destinatário
+  // Resolver número do destinatário (mesma ordem do incoming)
   const isLid = remoteJid.includes('@lid');
   let whatsappId = remoteJid;
   if (isLid && messageData.key.remoteJidAlt) {
     whatsappId = messageData.key.remoteJidAlt;
   } else if (isLid && messageData.senderPn) {
     whatsappId = messageData.senderPn;
+  } else if (isLid) {
+    const cached = await findContactByLidCache(supabase, remoteJid);
+    if (cached) {
+      whatsappId = cached.whatsapp_id || `${cached.phone_number}@s.whatsapp.net`;
+    } else {
+      const resolved = await resolveLidToRealNumber(remoteJid, instance, supabase);
+      if (resolved) whatsappId = resolved;
+    }
   }
   const phoneNumber = whatsappId.replace('@s.whatsapp.net', '').replace('@lid', '');
 
@@ -613,4 +652,133 @@ async function processQRCodeUpdate(
 
     console.log(`[evolution-webhook] Updated QR code for instance: ${instance.id}`);
   }
+}
+
+// ============================================================
+// LID Resolution helpers (Evolution API v2 - bia)
+// ============================================================
+
+async function findContactByLidCache(supabase: any, lid: string): Promise<any | null> {
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, phone_number, whatsapp_id, client_memory')
+      .contains('client_memory', { lid_aliases: [lid] })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn('[evolution-webhook] LID cache lookup error:', error.message);
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.warn('[evolution-webhook] LID cache lookup exception:', e);
+    return null;
+  }
+}
+
+async function cacheLidAlias(supabase: any, contact: any, lid: string): Promise<void> {
+  try {
+    const memory = (contact.client_memory && typeof contact.client_memory === 'object')
+      ? contact.client_memory : {};
+    const currentAliases: string[] = Array.isArray(memory.lid_aliases) ? memory.lid_aliases : [];
+    if (currentAliases.includes(lid)) return;
+    const updatedMemory = { ...memory, lid_aliases: [...currentAliases, lid] };
+    await supabase.from('contacts').update({ client_memory: updatedMemory }).eq('id', contact.id);
+    console.log(`[evolution-webhook] Cached LID alias ${lid} -> contact ${contact.id}`);
+  } catch (e) {
+    console.warn('[evolution-webhook] Failed to cache LID alias:', e);
+  }
+}
+
+async function getInstanceSecrets(supabase: any, instanceId: string): Promise<{ apiUrl: string; apiKey: string } | null> {
+  const { data, error } = await supabase
+    .from('whatsapp_instance_secrets')
+    .select('api_url, api_key')
+    .eq('instance_id', instanceId)
+    .maybeSingle();
+  if (error || !data?.api_url || !data?.api_key) {
+    console.warn('[evolution-webhook] Could not fetch instance secrets:', error?.message);
+    return null;
+  }
+  return { apiUrl: data.api_url, apiKey: data.api_key };
+}
+
+/**
+ * Resolve um @lid -> número real via Evolution API.
+ * Tenta /chat/findContacts e /chat/findChats. Retorna whatsappId real ou null.
+ */
+async function resolveLidToRealNumber(lid: string, instance: any, supabase: any): Promise<string | null> {
+  const secrets = await getInstanceSecrets(supabase, instance.id);
+  if (!secrets) {
+    console.warn('[evolution-webhook] No instance secrets - cannot resolve LID via API');
+    return null;
+  }
+  const baseUrl = secrets.apiUrl.replace(/\/$/, '');
+  const instanceName = instance.instance_name;
+  const lidNumeric = lid.replace('@lid', '');
+  const headers = { 'Content-Type': 'application/json', 'apikey': secrets.apiKey };
+
+  // 1) findContacts com where.id = lid
+  try {
+    const url = `${baseUrl}/chat/findContacts/${instanceName}`;
+    console.log(`[evolution-webhook] Trying findContacts at ${url}`);
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ where: { id: lid } }) });
+    if (res.ok) {
+      const json = await res.json();
+      const contacts = Array.isArray(json) ? json : (json?.contacts || json?.data || []);
+      console.log(`[evolution-webhook] findContacts returned ${contacts.length} result(s)`);
+      for (const c of contacts) {
+        const candidates = [c.remoteJid, c.realJid, c.whatsappId, c.jid].filter(Boolean);
+        for (const cand of candidates) {
+          if (typeof cand === 'string' && cand.includes('@s.whatsapp.net') && !cand.includes('@lid')) {
+            console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${cand}`);
+            return cand;
+          }
+        }
+        if (c.number && typeof c.number === 'string' && /^\d+$/.test(c.number) && c.number !== lidNumeric) {
+          const resolved = `${c.number}@s.whatsapp.net`;
+          console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${resolved} (via number)`);
+          return resolved;
+        }
+        // Caso o id seja o JID real e o LID esteja noutro campo
+        if (typeof c.id === 'string' && c.id.includes('@s.whatsapp.net') && !c.id.includes('@lid')) {
+          console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${c.id}`);
+          return c.id;
+        }
+      }
+    } else {
+      console.log(`[evolution-webhook] findContacts returned ${res.status}`);
+    }
+  } catch (e) {
+    console.warn('[evolution-webhook] findContacts error:', e instanceof Error ? e.message : e);
+  }
+
+  // 2) findChats e filtrar
+  try {
+    const url = `${baseUrl}/chat/findChats/${instanceName}`;
+    console.log(`[evolution-webhook] Trying findChats at ${url}`);
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({}) });
+    if (res.ok) {
+      const json = await res.json();
+      const chats = Array.isArray(json) ? json : (json?.chats || json?.data || []);
+      console.log(`[evolution-webhook] findChats returned ${chats.length} chat(s)`);
+      for (const chat of chats) {
+        const chatId = chat.id || chat.remoteJid;
+        const altId = chat.remoteJidAlt || chat.realJid;
+        if (chatId === lid && altId && typeof altId === 'string' && !altId.includes('@lid')) {
+          const resolved = altId.includes('@') ? altId : `${altId}@s.whatsapp.net`;
+          console.log(`[evolution-webhook] findChats resolved ${lid} -> ${resolved}`);
+          return resolved;
+        }
+      }
+    } else {
+      console.log(`[evolution-webhook] findChats returned ${res.status}`);
+    }
+  } catch (e) {
+    console.warn('[evolution-webhook] findChats error:', e instanceof Error ? e.message : e);
+  }
+
+  console.warn(`[evolution-webhook] Could not resolve LID ${lid} via any Evolution endpoint`);
+  return null;
 }
