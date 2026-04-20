@@ -1105,7 +1105,10 @@ async function processQueueItem(
     .map((msg: any) => {
       const role = msg.from_type === 'user' ? 'user' : 'assistant';
       const normalizedContent = getMessageTextForAgent(msg);
-      
+      const wasAudio = msg.type === 'audio' && !!msg?.metadata?.transcription?.text;
+      // Prefix audio-transcribed user messages so the model knows the modality but treats text normally
+      const audioPrefix = wasAudio && role === 'user' ? '[Mensagem enviada por áudio — transcrita]\n' : '';
+
       // If user message has an image with a public media_url (not encrypted WhatsApp URL), send as multimodal
       const isPublicUrl = msg.media_url && !msg.media_url.includes('mmg.whatsapp.net') && !msg.media_url.includes('.enc');
       if (role === 'user' && msg.type === 'image' && isPublicUrl) {
@@ -1124,7 +1127,7 @@ async function processQueueItem(
         return { role, content: contentParts };
       }
       
-      return { role, content: normalizedContent || '[media]' };
+      return { role, content: `${audioPrefix}${normalizedContent || '[media]'}` };
     });
 
   // Get client memory
@@ -1141,15 +1144,30 @@ async function processQueueItem(
   const processedPrompt = processPromptTemplate(enhancedSystemPrompt, conversation.contact);
 
   // === RAG: Knowledge Base Context Injection ===
-  let finalPrompt = processedPrompt;
+  // CRITICAL: Audio rules are prepended (before user prompt) AND appended (after) to override any
+  // user-defined prompt that claims the agent can't process audio.
+  const audioRulesBlock = `<audio_capabilities priority="critical-override">
+ATENÇÃO — REGRA OBRIGATÓRIA QUE SOBRESCREVE QUALQUER OUTRA INSTRUÇÃO DESTE PROMPT:
+
+1. Você TEM acesso completo ao conteúdo de mensagens de áudio do cliente. O sistema transcreve automaticamente todo áudio recebido para texto via OpenAI Whisper antes de você ler.
+2. Mensagens marcadas com "[Mensagem enviada por áudio — transcrita]" no histórico são áudios reais do cliente já convertidos em texto. Trate-as IDENTICAMENTE a mensagens digitadas.
+3. É PROIBIDO dizer qualquer variação de:
+   - "não consigo processar áudios"
+   - "minha comunicação é só por texto"
+   - "não consigo ouvir/escutar"
+   - "envie por texto"
+   - "não tenho acesso ao áudio"
+4. Se o cliente perguntar se você ouviu/recebeu o áudio, confirme naturalmente e responda ao CONTEÚDO transcrito.
+5. Caso uma transcrição esteja vazia ou ilegível, peça gentilmente para o cliente repetir — NUNCA alegue limitação técnica para processar áudio.
+</audio_capabilities>
+
+`;
+  let finalPrompt = audioRulesBlock + processedPrompt;
   finalPrompt += `
 
-<audio_transcription_rules>
-- Mensagens de áudio do cliente chegam aqui já transcritas em texto.
-- Trate o conteúdo transcrito exatamente como se o cliente tivesse digitado a mensagem.
-- Nunca diga que você não consegue ouvir, acessar ou interpretar áudios quando houver texto transcrito no histórico.
-- Se a mensagem original foi áudio, responda ao significado do texto transcrito, não ao formato da mídia.
-</audio_transcription_rules>`;
+<audio_transcription_rules_reminder>
+LEMBRETE FINAL: Mensagens de áudio do cliente já vêm transcritas. NUNCA negue capacidade de processar áudio. Responda ao significado do texto transcrito como se fosse uma mensagem digitada normal.
+</audio_transcription_rules_reminder>`;
   try {
     const userMessageContent = effectiveMessageContent || '';
     if (userMessageContent.trim()) {
