@@ -407,13 +407,21 @@ async function saveOutgoingMessage(
     return;
   }
 
-  // Resolver número do destinatário
+  // Resolver número do destinatário (mesma ordem do incoming)
   const isLid = remoteJid.includes('@lid');
   let whatsappId = remoteJid;
   if (isLid && messageData.key.remoteJidAlt) {
     whatsappId = messageData.key.remoteJidAlt;
   } else if (isLid && messageData.senderPn) {
     whatsappId = messageData.senderPn;
+  } else if (isLid) {
+    const cached = await findContactByLidCache(supabase, remoteJid);
+    if (cached) {
+      whatsappId = cached.whatsapp_id || `${cached.phone_number}@s.whatsapp.net`;
+    } else {
+      const resolved = await resolveLidToRealNumber(remoteJid, instance, supabase);
+      if (resolved) whatsappId = resolved;
+    }
   }
   const phoneNumber = whatsappId.replace('@s.whatsapp.net', '').replace('@lid', '');
 
