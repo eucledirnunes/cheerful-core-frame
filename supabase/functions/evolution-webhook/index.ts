@@ -58,7 +58,7 @@ serve(async (req) => {
     // Buscar instância por instance_name ou instance_id_external
     let { data: instanceData } = await supabase
       .from('whatsapp_instances')
-      .select('id, instance_name, instance_id_external, provider_type, status, user_id')
+      .select('id, instance_name, instance_id_external, provider_type, status, user_id, metadata')
       .eq('instance_name', payload.instance)
       .maybeSingle();
 
@@ -66,7 +66,7 @@ serve(async (req) => {
       // Fallback para instance_id_external (Evolution Cloud envia UUID)
       const { data: cloudInstance } = await supabase
         .from('whatsapp_instances')
-        .select('id, instance_name, instance_id_external, provider_type, status, user_id')
+        .select('id, instance_name, instance_id_external, provider_type, status, user_id, metadata')
         .eq('instance_id_external', payload.instance)
         .maybeSingle();
       instanceData = cloudInstance;
