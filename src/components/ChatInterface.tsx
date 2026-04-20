@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Search, MoreVertical, Phone, Paperclip, Send, Check, CheckCheck, 
   Smile, Play, Loader2, MessageSquare, Info, X, Mail, 
-  Tag, Bot, User, Pause, Brain, Plus, Copy, Ban, PhoneOff, UserCheck, Wifi, Zap
+  Tag, Bot, User, Pause, Brain, Plus, Copy, Ban, PhoneOff, UserCheck, Wifi, Zap, FileText
 } from 'lucide-react';
 import { MessageDirection, MessageType, UIConversation, UIMessage, ConversationStatus, TagDefinition } from '../types';
 import { Button } from './Button';
@@ -387,11 +387,52 @@ const ChatInterface: React.FC = () => {
               {isPlaying || progress > 0 ? formatAudioTime(progress) : formatAudioTime(duration)} {duration > 0 ? `/ ${formatAudioTime(duration)}` : ''}
             </span>
           </div>
+          </div>
+          {renderTranscription(msg)}
         </div>
       );
     }
 
     return <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>;
+  };
+
+  const renderTranscription = (msg: UIMessage) => {
+    const isOutgoing = msg.direction === MessageDirection.OUTGOING;
+    if (msg.transcription?.text) {
+      return (
+        <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-start gap-2`}>
+          <FileText className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className={`text-[10px] uppercase tracking-wide font-medium ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                Transcrição
+              </span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded ${isOutgoing ? 'bg-primary-foreground/15 text-primary-foreground/80' : 'bg-muted text-muted-foreground'}`}>
+                {msg.transcription.provider}
+              </span>
+            </div>
+            <p className={`text-xs italic leading-snug whitespace-pre-wrap ${isOutgoing ? 'text-primary-foreground/85' : 'text-muted-foreground'}`}>
+              {msg.transcription.text}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Show "Transcrevendo..." for recent audios (< 60s) without transcription yet
+    const createdAt = msg.createdAt ? new Date(msg.createdAt).getTime() : null;
+    const ageSec = createdAt ? (Date.now() - createdAt) / 1000 : Infinity;
+    if (ageSec < 60) {
+      return (
+        <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-center gap-2`}>
+          <Loader2 className={`w-3 h-3 animate-spin ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} />
+          <span className={`text-[11px] italic ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+            Transcrevendo…
+          </span>
+        </div>
+      );
+    }
+    return null;
   };
 
   if (loading) {

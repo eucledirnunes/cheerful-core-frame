@@ -308,6 +308,12 @@ export interface UIMessage {
   fromType: MessageFromType;
   mediaUrl: string | null;
   whatsappMessageId: string | null;
+  transcription?: {
+    text: string;
+    provider: string;
+    transcribed_at: string;
+  };
+  createdAt?: string;
 }
 
 // ============= Utility Functions =============
@@ -349,6 +355,8 @@ export function transformDBToUIConversation(
 }
 
 export function transformDBToUIMessage(msg: DBMessage): UIMessage {
+  const meta = (msg.metadata || {}) as Record<string, any>;
+  const t = meta.transcription;
   return {
     id: msg.id,
     content: msg.content || '',
@@ -358,7 +366,11 @@ export function transformDBToUIMessage(msg: DBMessage): UIMessage {
     status: mapDBMessageStatus(msg.status),
     fromType: msg.from_type,
     mediaUrl: msg.media_url,
-    whatsappMessageId: msg.whatsapp_message_id
+    whatsappMessageId: msg.whatsapp_message_id,
+    transcription: t && typeof t === 'object' && t.text
+      ? { text: String(t.text), provider: String(t.provider || 'unknown'), transcribed_at: String(t.transcribed_at || msg.created_at) }
+      : undefined,
+    createdAt: msg.created_at,
   };
 }
 

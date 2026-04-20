@@ -278,28 +278,44 @@ async function combineAndTranscribeMessages(
     if (messageData.type === 'audio' || messageData.messageType === 'audio') {
       const audioMediaId = messageData.audio?.id || messageData.key?.id;
       const instanceId = queueMsg.instance_id;
-      
+      const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+
+      const persistTranscription = async (text: string, provider: 'whisper' | 'gemini', extra: Record<string, any> = {}) => {
+        const existingMeta = (dbMsg.metadata as Record<string, any>) || {};
+        await supabase
+          .from('messages')
+          .update({
+            content: text,
+            metadata: {
+              ...existingMeta,
+              transcription: {
+                text,
+                provider,
+                transcribed_at: new Date().toISOString(),
+              },
+            },
+            ...extra,
+          })
+          .eq('id', dbMsg.id);
+      };
+
       // Try Evolution API first if instance_id is present
-      if (audioMediaId && instanceId && lovableApiKey) {
-        console.log('[MessageGrouper] Transcribing audio via Evolution API:', audioMediaId);
+      if (audioMediaId && instanceId) {
+        console.log('[MessageGrouper] Downloading audio via Evolution API:', audioMediaId);
         const mediaResult = await downloadEvolutionMedia(supabase, instanceId, audioMediaId, messageData);
         if (mediaResult) {
-          // Upload audio to storage for playback
           const audioPlaybackUrl = await uploadAudioToStorage(supabase, mediaResult.buffer, dbMsg.id);
-          
-          const transcription = await transcribeAudio(mediaResult.buffer, lovableApiKey);
-          if (transcription) {
+
+          const { text: transcription, provider } = await transcribeWithFallback(
+            mediaResult.buffer,
+            openaiApiKey,
+            lovableApiKey
+          );
+
+          if (transcription && provider) {
             content = transcription;
-            // Update the message in database with transcription and playable URL
-            await supabase
-              .from('messages')
-              .update({ 
-                content: transcription,
-                ...(audioPlaybackUrl ? { media_url: audioPlaybackUrl } : {})
-              })
-              .eq('id', dbMsg.id);
+            await persistTranscription(transcription, provider, audioPlaybackUrl ? { media_url: audioPlaybackUrl } : {});
           } else if (audioPlaybackUrl) {
-            // Even if transcription fails, update the playable URL
             await supabase
               .from('messages')
               .update({ media_url: audioPlaybackUrl })
@@ -308,18 +324,18 @@ async function combineAndTranscribeMessages(
         }
       }
       // Fall back to WhatsApp Official API if Evolution failed or no instance_id
-      else if (audioMediaId && settings?.whatsapp_access_token && lovableApiKey) {
-        console.log('[MessageGrouper] Transcribing audio via WhatsApp Official API:', audioMediaId);
+      else if (audioMediaId && settings?.whatsapp_access_token) {
+        console.log('[MessageGrouper] Downloading audio via WhatsApp Official API:', audioMediaId);
         const audioBuffer = await downloadWhatsAppMedia(settings, audioMediaId);
         if (audioBuffer) {
-          const transcription = await transcribeAudio(audioBuffer, lovableApiKey);
-          if (transcription) {
+          const { text: transcription, provider } = await transcribeWithFallback(
+            audioBuffer,
+            openaiApiKey,
+            lovableApiKey
+          );
+          if (transcription && provider) {
             content = transcription;
-            // Update the message in database with transcription
-            await supabase
-              .from('messages')
-              .update({ content: transcription })
-              .eq('id', dbMsg.id);
+            await persistTranscription(transcription, provider);
           }
         }
       }
@@ -473,12 +489,68 @@ async function downloadEvolutionMedia(
   }
 }
 
-// Transcribe audio using Lovable AI Gateway (Gemini with audio input)
-async function transcribeAudio(audioBuffer: ArrayBuffer, lovableApiKey: string): Promise<string | null> {
-  try {
-    console.log('[MessageGrouper] Transcribing audio via Gemini, size:', audioBuffer.byteLength, 'bytes');
+// Transcribe audio: try OpenAI Whisper first, fallback to Gemini via Lovable AI Gateway
+async function transcribeWithFallback(
+  audioBuffer: ArrayBuffer,
+  openaiApiKey: string | undefined,
+  lovableApiKey: string | undefined
+): Promise<{ text: string | null; provider: 'whisper' | 'gemini' | null }> {
+  if (openaiApiKey) {
+    const whisperText = await transcribeWithWhisper(audioBuffer, openaiApiKey);
+    if (whisperText) {
+      console.log('[whisper] success');
+      return { text: whisperText, provider: 'whisper' };
+    }
+    console.warn('[whisper] failed, falling back to gemini');
+  } else {
+    console.warn('[whisper] no OPENAI_API_KEY configured, using gemini');
+  }
 
-    // Convert audio to base64
+  if (lovableApiKey) {
+    const geminiText = await transcribeWithGemini(audioBuffer, lovableApiKey);
+    if (geminiText) {
+      console.log('[gemini] success (fallback)');
+      return { text: geminiText, provider: 'gemini' };
+    }
+  }
+
+  return { text: null, provider: null };
+}
+
+async function transcribeWithWhisper(audioBuffer: ArrayBuffer, openaiApiKey: string): Promise<string | null> {
+  try {
+    console.log('[whisper] transcribing, size:', audioBuffer.byteLength, 'bytes');
+    const blob = new Blob([audioBuffer], { type: 'audio/ogg' });
+    const formData = new FormData();
+    formData.append('file', blob, 'audio.ogg');
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'pt');
+    formData.append('response_format', 'json');
+
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${openaiApiKey}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[whisper] error', response.status, errorText);
+      return null;
+    }
+
+    const result = await response.json();
+    const text = (result.text || '').trim();
+    return text || null;
+  } catch (error) {
+    console.error('[whisper] exception:', error);
+    return null;
+  }
+}
+
+async function transcribeWithGemini(audioBuffer: ArrayBuffer, lovableApiKey: string): Promise<string | null> {
+  try {
+    console.log('[gemini] transcribing, size:', audioBuffer.byteLength, 'bytes');
     const uint8Array = new Uint8Array(audioBuffer);
     let binaryStr = '';
     for (let i = 0; i < uint8Array.length; i++) {
@@ -498,17 +570,8 @@ async function transcribeAudio(audioBuffer: ArrayBuffer, lovableApiKey: string):
           {
             role: 'user',
             content: [
-              {
-                type: 'text',
-                text: 'Transcreva este áudio em português brasileiro. Retorne APENAS o texto transcrito, sem nenhum comentário, formatação ou explicação adicional.'
-              },
-              {
-                type: 'input_audio',
-                input_audio: {
-                  data: base64Audio,
-                  format: 'ogg'
-                }
-              }
+              { type: 'text', text: 'Transcreva este áudio em português brasileiro. Retorne APENAS o texto transcrito, sem nenhum comentário, formatação ou explicação adicional.' },
+              { type: 'input_audio', input_audio: { data: base64Audio, format: 'ogg' } }
             ]
           }
         ],
@@ -519,17 +582,15 @@ async function transcribeAudio(audioBuffer: ArrayBuffer, lovableApiKey: string):
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[MessageGrouper] Transcription error:', response.status, errorText);
+      console.error('[gemini] error', response.status, errorText);
       return null;
     }
 
     const result = await response.json();
     const transcription = result.choices?.[0]?.message?.content?.trim();
-    
-    console.log('[MessageGrouper] Transcription result:', transcription);
     return transcription || null;
   } catch (error) {
-    console.error('[MessageGrouper] Error transcribing audio:', error);
+    console.error('[gemini] exception:', error);
     return null;
   }
 }
