@@ -398,6 +398,19 @@ const ChatInterface: React.FC = () => {
 
   const renderTranscription = (msg: UIMessage) => {
     const isOutgoing = msg.direction === MessageDirection.OUTGOING;
+
+    // Failed transcription — subtle error, no spinner
+    if (msg.transcription?.provider === 'failed') {
+      return (
+        <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-center gap-2`}>
+          <FileText className={`w-3 h-3 ${isOutgoing ? 'text-primary-foreground/60' : 'text-muted-foreground'}`} />
+          <span className={`text-[11px] italic ${isOutgoing ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
+            Transcrição indisponível
+          </span>
+        </div>
+      );
+    }
+
     if (msg.transcription?.text) {
       return (
         <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-start gap-2`}>
@@ -419,10 +432,10 @@ const ChatInterface: React.FC = () => {
       );
     }
 
-    // Show "Transcrevendo..." for recent audios (< 60s) without transcription yet
+    // Show "Transcrevendo..." only for very recent audios (< 30s)
     const createdAt = msg.createdAt ? new Date(msg.createdAt).getTime() : null;
     const ageSec = createdAt ? (Date.now() - createdAt) / 1000 : Infinity;
-    if (ageSec < 60) {
+    if (ageSec < 30) {
       return (
         <div className={`mt-2 pt-2 border-t ${isOutgoing ? 'border-primary-foreground/20' : 'border-border'} flex items-center gap-2`}>
           <Loader2 className={`w-3 h-3 animate-spin ${isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'}`} />
