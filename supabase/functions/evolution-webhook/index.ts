@@ -253,6 +253,11 @@ async function processMessageUpsert(
     console.log('[evolution-webhook] Updated existing contact (preserved whatsapp_id):', contact.id);
   }
 
+  // Cachear LID -> contato em client_memory.lid_aliases para resoluções futuras
+  if (isLid && (resolutionStrategy === 'remoteJidAlt' || resolutionStrategy === 'senderPn' || resolutionStrategy === 'lid-api-resolve')) {
+    await cacheLidAlias(supabase, contact, remoteJid);
+  }
+
   // Fix 1: Buscar conversa ativa sem filtro de instance_id para evitar duplicatas
   let { data: conversation } = await supabase
     .from('conversations')
