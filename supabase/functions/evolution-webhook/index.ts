@@ -706,7 +706,22 @@ async function getInstanceSecrets(supabase: any, instanceId: string): Promise<{ 
 
 /**
  * Resolve um @lid -> número real via Evolution API.
- * Tenta /chat/findContacts e /chat/findChats. Retorna whatsappId real ou null.
+ *
+ * IMPORTANTE: a Evolution self-hosted (`evolution20.flowlly.cloud` / versão `bia`)
+ * tem um bug onde `POST /chat/findContacts` IGNORA o filtro `where` e retorna
+ * a lista inteira de contatos. Por isso NÃO confiamos no "primeiro item" da lista.
+ *
+ * Estratégia robusta:
+ *   1. Buscar TODOS os contatos da instância em UMA chamada (`findContacts` sem filtro).
+ *   2. Localizar a entrada do LID na lista (`remoteJid === <lid>`) e pegar a
+ *      `profilePicUrl` dele.
+ *   3. Achar o(s) contato(s) `@s.whatsapp.net` que tenham EXATAMENTE a mesma
+ *      `profilePicUrl` (mesma URL = mesma pessoa, garantido pelo WhatsApp).
+ *   4. Validar o candidato com `POST /chat/whatsappNumbers` para confirmar que
+ *      o número realmente existe no WhatsApp (e capturar o JID canônico, que
+ *      pode diferir por causa do nono dígito brasileiro).
+ *
+ * Sem profilePicUrl ou sem match -> retorna null (caímos no fallback de salvar o LID).
  */
 async function resolveLidToRealNumber(lid: string, instance: any, supabase: any): Promise<string | null> {
   const secrets = await getInstanceSecrets(supabase, instance.id);
@@ -716,69 +731,113 @@ async function resolveLidToRealNumber(lid: string, instance: any, supabase: any)
   }
   const baseUrl = secrets.apiUrl.replace(/\/$/, '');
   const instanceName = instance.instance_name;
-  const lidNumeric = lid.replace('@lid', '');
   const headers = { 'Content-Type': 'application/json', 'apikey': secrets.apiKey };
 
-  // 1) findContacts com where.id = lid
+  // ---------- Step 1: pegar a lista completa de contatos ----------
+  let contacts: any[] = [];
   try {
     const url = `${baseUrl}/chat/findContacts/${instanceName}`;
-    console.log(`[evolution-webhook] Trying findContacts at ${url}`);
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ where: { id: lid } }) });
-    if (res.ok) {
-      const json = await res.json();
-      const contacts = Array.isArray(json) ? json : (json?.contacts || json?.data || []);
-      console.log(`[evolution-webhook] findContacts returned ${contacts.length} result(s)`);
-      for (const c of contacts) {
-        const candidates = [c.remoteJid, c.realJid, c.whatsappId, c.jid].filter(Boolean);
-        for (const cand of candidates) {
-          if (typeof cand === 'string' && cand.includes('@s.whatsapp.net') && !cand.includes('@lid')) {
-            console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${cand}`);
-            return cand;
-          }
-        }
-        if (c.number && typeof c.number === 'string' && /^\d+$/.test(c.number) && c.number !== lidNumeric) {
-          const resolved = `${c.number}@s.whatsapp.net`;
-          console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${resolved} (via number)`);
-          return resolved;
-        }
-        // Caso o id seja o JID real e o LID esteja noutro campo
-        if (typeof c.id === 'string' && c.id.includes('@s.whatsapp.net') && !c.id.includes('@lid')) {
-          console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${c.id}`);
-          return c.id;
-        }
-      }
-    } else {
-      console.log(`[evolution-webhook] findContacts returned ${res.status}`);
+    console.log(`[evolution-webhook] Fetching contact list from ${url}`);
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({}) });
+    if (!res.ok) {
+      console.warn(`[evolution-webhook] findContacts returned ${res.status}`);
+      return null;
     }
+    const json = await res.json();
+    contacts = Array.isArray(json) ? json : (json?.contacts || json?.data || []);
+    console.log(`[evolution-webhook] Got ${contacts.length} contacts from Evolution`);
   } catch (e) {
     console.warn('[evolution-webhook] findContacts error:', e instanceof Error ? e.message : e);
+    return null;
   }
 
-  // 2) findChats e filtrar
+  // ---------- Step 2: localizar a entrada do LID e pegar a foto ----------
+  const lidEntry = contacts.find(
+    (c) => typeof c?.remoteJid === 'string' && c.remoteJid === lid
+  );
+  if (!lidEntry) {
+    console.warn(`[evolution-webhook] LID ${lid} not present in Evolution contact list`);
+    return null;
+  }
+  const targetPicUrl: string | undefined = lidEntry.profilePicUrl;
+  if (!targetPicUrl) {
+    console.warn(`[evolution-webhook] LID ${lid} entry has no profilePicUrl - cannot correlate`);
+    return null;
+  }
+
+  // ---------- Step 3: achar candidatos com a MESMA profilePicUrl ----------
+  const candidates = contacts.filter((c) => {
+    if (!c || c.remoteJid === lid) return false;
+    if (typeof c.remoteJid !== 'string') return false;
+    if (c.remoteJid.includes('@lid') || !c.remoteJid.includes('@s.whatsapp.net')) return false;
+    return c.profilePicUrl === targetPicUrl;
+  });
+
+  if (candidates.length === 0) {
+    console.warn(
+      `[evolution-webhook] No @s.whatsapp.net contact shares profilePicUrl with ${lid} (pushName="${lidEntry.pushName ?? ''}")`
+    );
+    return null;
+  }
+
+  console.log(
+    `[evolution-webhook] Found ${candidates.length} candidate(s) sharing profilePicUrl with ${lid}: ${candidates
+      .map((c) => c.remoteJid)
+      .join(', ')}`
+  );
+
+  // ---------- Step 4: validar candidato(s) com whatsappNumbers ----------
+  // Pega todas as variações brasileiras (com e sem o "9" extra) para todos os
+  // candidatos e valida em UMA única chamada.
+  const variants = new Set<string>();
+  for (const cand of candidates) {
+    const num = String(cand.remoteJid).replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    if (num) variants.add(num);
+    // Brasileiro: tenta a versão "com 9" se faltar
+    if (/^55\d{10}$/.test(num)) {
+      // 55 + DDD(2) + 8 dígitos -> adiciona 9 depois do DDD
+      variants.add(num.slice(0, 4) + '9' + num.slice(4));
+    }
+    // Brasileiro: tenta a versão "sem 9" se tiver
+    if (/^55\d{2}9\d{8}$/.test(num)) {
+      variants.add(num.slice(0, 4) + num.slice(5));
+    }
+  }
+  const numbersArr = Array.from(variants);
+  console.log(`[evolution-webhook] Validating ${numbersArr.length} number variant(s) via whatsappNumbers`);
+
   try {
-    const url = `${baseUrl}/chat/findChats/${instanceName}`;
-    console.log(`[evolution-webhook] Trying findChats at ${url}`);
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({}) });
+    const url = `${baseUrl}/chat/whatsappNumbers/${instanceName}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ numbers: numbersArr }),
+    });
     if (res.ok) {
       const json = await res.json();
-      const chats = Array.isArray(json) ? json : (json?.chats || json?.data || []);
-      console.log(`[evolution-webhook] findChats returned ${chats.length} chat(s)`);
-      for (const chat of chats) {
-        const chatId = chat.id || chat.remoteJid;
-        const altId = chat.remoteJidAlt || chat.realJid;
-        if (chatId === lid && altId && typeof altId === 'string' && !altId.includes('@lid')) {
-          const resolved = altId.includes('@') ? altId : `${altId}@s.whatsapp.net`;
-          console.log(`[evolution-webhook] findChats resolved ${lid} -> ${resolved}`);
-          return resolved;
+      const arr: any[] = Array.isArray(json) ? json : [];
+      // Pega o PRIMEIRO que existe e tem JID @s.whatsapp.net
+      for (const item of arr) {
+        if (item?.exists && typeof item?.jid === 'string' && item.jid.includes('@s.whatsapp.net')) {
+          console.log(`[evolution-webhook] LID ${lid} resolved via profilePic+whatsappNumbers -> ${item.jid}`);
+          return item.jid;
         }
       }
+      console.warn(`[evolution-webhook] whatsappNumbers reported no existing variant for LID ${lid}`);
     } else {
-      console.log(`[evolution-webhook] findChats returned ${res.status}`);
+      console.warn(`[evolution-webhook] whatsappNumbers returned ${res.status}`);
     }
   } catch (e) {
-    console.warn('[evolution-webhook] findChats error:', e instanceof Error ? e.message : e);
+    console.warn('[evolution-webhook] whatsappNumbers error:', e instanceof Error ? e.message : e);
   }
 
-  console.warn(`[evolution-webhook] Could not resolve LID ${lid} via any Evolution endpoint`);
+  // Último recurso: usar o primeiro candidato sem validar (já filtrado por foto)
+  const firstJid = candidates[0]?.remoteJid;
+  if (typeof firstJid === 'string') {
+    console.log(`[evolution-webhook] Falling back to first profilePic match for ${lid} -> ${firstJid}`);
+    return firstJid;
+  }
+
+  console.warn(`[evolution-webhook] Could not resolve LID ${lid} via any strategy`);
   return null;
 }
