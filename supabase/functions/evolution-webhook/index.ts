@@ -653,3 +653,132 @@ async function processQRCodeUpdate(
     console.log(`[evolution-webhook] Updated QR code for instance: ${instance.id}`);
   }
 }
+
+// ============================================================
+// LID Resolution helpers (Evolution API v2 - bia)
+// ============================================================
+
+async function findContactByLidCache(supabase: any, lid: string): Promise<any | null> {
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, phone_number, whatsapp_id, client_memory')
+      .contains('client_memory', { lid_aliases: [lid] })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn('[evolution-webhook] LID cache lookup error:', error.message);
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.warn('[evolution-webhook] LID cache lookup exception:', e);
+    return null;
+  }
+}
+
+async function cacheLidAlias(supabase: any, contact: any, lid: string): Promise<void> {
+  try {
+    const memory = (contact.client_memory && typeof contact.client_memory === 'object')
+      ? contact.client_memory : {};
+    const currentAliases: string[] = Array.isArray(memory.lid_aliases) ? memory.lid_aliases : [];
+    if (currentAliases.includes(lid)) return;
+    const updatedMemory = { ...memory, lid_aliases: [...currentAliases, lid] };
+    await supabase.from('contacts').update({ client_memory: updatedMemory }).eq('id', contact.id);
+    console.log(`[evolution-webhook] Cached LID alias ${lid} -> contact ${contact.id}`);
+  } catch (e) {
+    console.warn('[evolution-webhook] Failed to cache LID alias:', e);
+  }
+}
+
+async function getInstanceSecrets(supabase: any, instanceId: string): Promise<{ apiUrl: string; apiKey: string } | null> {
+  const { data, error } = await supabase
+    .from('whatsapp_instance_secrets')
+    .select('api_url, api_key')
+    .eq('instance_id', instanceId)
+    .maybeSingle();
+  if (error || !data?.api_url || !data?.api_key) {
+    console.warn('[evolution-webhook] Could not fetch instance secrets:', error?.message);
+    return null;
+  }
+  return { apiUrl: data.api_url, apiKey: data.api_key };
+}
+
+/**
+ * Resolve um @lid -> número real via Evolution API.
+ * Tenta /chat/findContacts e /chat/findChats. Retorna whatsappId real ou null.
+ */
+async function resolveLidToRealNumber(lid: string, instance: any, supabase: any): Promise<string | null> {
+  const secrets = await getInstanceSecrets(supabase, instance.id);
+  if (!secrets) {
+    console.warn('[evolution-webhook] No instance secrets - cannot resolve LID via API');
+    return null;
+  }
+  const baseUrl = secrets.apiUrl.replace(/\/$/, '');
+  const instanceName = instance.instance_name;
+  const lidNumeric = lid.replace('@lid', '');
+  const headers = { 'Content-Type': 'application/json', 'apikey': secrets.apiKey };
+
+  // 1) findContacts com where.id = lid
+  try {
+    const url = `${baseUrl}/chat/findContacts/${instanceName}`;
+    console.log(`[evolution-webhook] Trying findContacts at ${url}`);
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ where: { id: lid } }) });
+    if (res.ok) {
+      const json = await res.json();
+      const contacts = Array.isArray(json) ? json : (json?.contacts || json?.data || []);
+      console.log(`[evolution-webhook] findContacts returned ${contacts.length} result(s)`);
+      for (const c of contacts) {
+        const candidates = [c.remoteJid, c.realJid, c.whatsappId, c.jid].filter(Boolean);
+        for (const cand of candidates) {
+          if (typeof cand === 'string' && cand.includes('@s.whatsapp.net') && !cand.includes('@lid')) {
+            console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${cand}`);
+            return cand;
+          }
+        }
+        if (c.number && typeof c.number === 'string' && /^\d+$/.test(c.number) && c.number !== lidNumeric) {
+          const resolved = `${c.number}@s.whatsapp.net`;
+          console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${resolved} (via number)`);
+          return resolved;
+        }
+        // Caso o id seja o JID real e o LID esteja noutro campo
+        if (typeof c.id === 'string' && c.id.includes('@s.whatsapp.net') && !c.id.includes('@lid')) {
+          console.log(`[evolution-webhook] findContacts resolved ${lid} -> ${c.id}`);
+          return c.id;
+        }
+      }
+    } else {
+      console.log(`[evolution-webhook] findContacts returned ${res.status}`);
+    }
+  } catch (e) {
+    console.warn('[evolution-webhook] findContacts error:', e instanceof Error ? e.message : e);
+  }
+
+  // 2) findChats e filtrar
+  try {
+    const url = `${baseUrl}/chat/findChats/${instanceName}`;
+    console.log(`[evolution-webhook] Trying findChats at ${url}`);
+    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({}) });
+    if (res.ok) {
+      const json = await res.json();
+      const chats = Array.isArray(json) ? json : (json?.chats || json?.data || []);
+      console.log(`[evolution-webhook] findChats returned ${chats.length} chat(s)`);
+      for (const chat of chats) {
+        const chatId = chat.id || chat.remoteJid;
+        const altId = chat.remoteJidAlt || chat.realJid;
+        if (chatId === lid && altId && typeof altId === 'string' && !altId.includes('@lid')) {
+          const resolved = altId.includes('@') ? altId : `${altId}@s.whatsapp.net`;
+          console.log(`[evolution-webhook] findChats resolved ${lid} -> ${resolved}`);
+          return resolved;
+        }
+      }
+    } else {
+      console.log(`[evolution-webhook] findChats returned ${res.status}`);
+    }
+  } catch (e) {
+    console.warn('[evolution-webhook] findChats error:', e instanceof Error ? e.message : e);
+  }
+
+  console.warn(`[evolution-webhook] Could not resolve LID ${lid} via any Evolution endpoint`);
+  return null;
+}
