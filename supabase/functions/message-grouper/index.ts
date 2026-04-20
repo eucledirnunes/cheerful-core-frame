@@ -299,6 +299,24 @@ async function combineAndTranscribeMessages(
           .eq('id', dbMsg.id);
       };
 
+      const markTranscriptionFailed = async (reason: string) => {
+        const existingMeta = (dbMsg.metadata as Record<string, any>) || {};
+        await supabase
+          .from('messages')
+          .update({
+            metadata: {
+              ...existingMeta,
+              transcription: {
+                text: '',
+                provider: 'failed',
+                transcribed_at: new Date().toISOString(),
+                error: reason,
+              },
+            },
+          })
+          .eq('id', dbMsg.id);
+      };
+
       // Try Evolution API first if instance_id is present
       if (audioMediaId && instanceId) {
         console.log('[MessageGrouper] Downloading audio via Evolution API:', audioMediaId);
@@ -315,12 +333,17 @@ async function combineAndTranscribeMessages(
           if (transcription && provider) {
             content = transcription;
             await persistTranscription(transcription, provider, audioPlaybackUrl ? { media_url: audioPlaybackUrl } : {});
-          } else if (audioPlaybackUrl) {
-            await supabase
-              .from('messages')
-              .update({ media_url: audioPlaybackUrl })
-              .eq('id', dbMsg.id);
+          } else {
+            await markTranscriptionFailed('transcription_providers_failed');
+            if (audioPlaybackUrl) {
+              await supabase
+                .from('messages')
+                .update({ media_url: audioPlaybackUrl })
+                .eq('id', dbMsg.id);
+            }
           }
+        } else {
+          await markTranscriptionFailed('evolution_media_download_failed');
         }
       }
       // Fall back to WhatsApp Official API if Evolution failed or no instance_id
@@ -336,8 +359,14 @@ async function combineAndTranscribeMessages(
           if (transcription && provider) {
             content = transcription;
             await persistTranscription(transcription, provider);
+          } else {
+            await markTranscriptionFailed('transcription_providers_failed');
           }
+        } else {
+          await markTranscriptionFailed('whatsapp_media_download_failed');
         }
+      } else {
+        await markTranscriptionFailed('no_audio_media_id_or_provider');
       }
     }
 
