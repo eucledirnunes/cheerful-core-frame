@@ -1088,6 +1088,9 @@ async function processQueueItem(
     return;
   }
 
+  const effectiveMessageContent = getMessageTextForAgent(message, item?.context_data?.combined_content);
+  console.log('[Nina] Effective incoming content:', effectiveMessageContent || '[empty]');
+
   // Get recent messages for context (last 20)
   const { data: recentMessages } = await supabase
     .from('messages')
@@ -1101,6 +1104,7 @@ async function processQueueItem(
     .reverse()
     .map((msg: any) => {
       const role = msg.from_type === 'user' ? 'user' : 'assistant';
+      const normalizedContent = getMessageTextForAgent(msg);
       
       // If user message has an image with a public media_url (not encrypted WhatsApp URL), send as multimodal
       const isPublicUrl = msg.media_url && !msg.media_url.includes('mmg.whatsapp.net') && !msg.media_url.includes('.enc');
@@ -1115,12 +1119,12 @@ async function processQueueItem(
         const textContent = msg.content && msg.content !== '[Imagem]' ? msg.content : 'O usuário enviou esta imagem.';
         contentParts.push({
           type: 'text',
-          text: textContent
+          text: normalizedContent || textContent
         });
         return { role, content: contentParts };
       }
       
-      return { role, content: msg.content || '[media]' };
+      return { role, content: normalizedContent || '[media]' };
     });
 
   // Get client memory
