@@ -1,63 +1,85 @@
 
 
-## Problem
+## Diagnóstico
 
-Users are confusing the overlay's static mockups with actual clickable buttons. The current design uses cards with mini UI recreations that look too much like real interactive elements. We need to make it unmistakably an **animated tutorial/demo** rather than a UI with buttons.
+**Problema confirmado:** Você mandou mensagem do número `5548996911268` (final 1268), mas o sistema gravou o contato como `16089199161420` (final 1420). O número 1420 é um **LID** (Linked-device ID) — um identificador interno do WhatsApp, **não um número de telefone real**.
 
-## Approach: Animated Step-by-Step Demo
+**Por quê?** A versão da Evolution API que está rodando agora (`bia`, self-hosted) envia o payload assim:
 
-Replace the current card-based layout with a **single centered cinematic animation** that plays out the entire remix process as a looping demo. The overlay will show a realistic recreation of the Lovable UI with an animated cursor performing each action, making it obvious this is a demonstration, not interactive elements.
+```json
+"key": {
+  "id": "3EB07DDDE831E19C2B4091",
+  "fromMe": false,
+  "remoteJid": "16089199161420@lid"
+}
+```
 
-### Design Concept
+Sem os campos `remoteJidAlt` nem `senderPn`. O webhook tem fallback para esses dois (que existiam em versões anteriores), mas como nenhum vem no payload, ele cai no último fallback (`whatsappId = remoteJid`) e salva o LID como se fosse telefone.
 
-A dark overlay with a central "screen recording" style container that loops through 3 phases:
+## Solução: Fallback resolvendo LID via Evolution API
 
-1. **Phase 1 (0-3s)**: Show the project name area at top-left. An animated cursor moves to it and clicks. The dropdown menu slides open (based on the real menu from the user's screenshot: Settings, Remix this project, Publish to profile, etc.)
+Manter toda a lógica atual intacta (prioridade `remoteJidAlt` → `senderPn`) e adicionar **um terceiro fallback** quando ambos estiverem ausentes mas o `remoteJid` for `@lid`: chamar a Evolution API para resolver o número real.
 
-2. **Phase 2 (3-6s)**: The cursor moves down to "Remix this project" menu item, which highlights on hover. Cursor clicks it. Menu closes.
+### Endpoints da Evolution para resolver LID → número real
 
-3. **Phase 3 (6-10s)**: The "Remix project" modal appears (matching the real modal from screenshot 2: project name field, "Include project history" toggle, "Include custom knowledge" toggle). Cursor moves to "Include custom knowledge" toggle and activates it. Then cursor moves to "Remix" button and clicks. Brief success flash.
+A Evolution v2 expõe alguns endpoints úteis. Vou tentar nesta ordem (parando no primeiro que funcionar):
 
-4. **Loop**: Fade out and restart.
+1. **`POST /chat/findContacts/{instance}`** com `{ where: { id: "16089199161420@lid" } }` — retorna o contato com `id` = JID real (`5548996911268@s.whatsapp.net`)
+2. **`POST /chat/whatsappNumbers/{instance}`** com `{ numbers: ["16089199161420"] }` — útil para validar
+3. **`GET /chat/findChats/{instance}`** + filtro local — fallback amplo
 
-### Visual Cues That This Is Instructional
+Se nenhum funcionar, mantemos o comportamento atual (salva o LID) para não quebrar nada.
 
-- A banner at the top: **"📋 Siga estas instruções para criar sua cópia"** with a subtle pulsing border
-- Step indicators (1, 2, 3) that light up as each phase plays
-- The animated cursor (a custom SVG mouse pointer with a click ripple effect) makes it obvious this is a demonstration
-- A "Fechar" (close) or dismiss button so users can close the overlay
-- Text labels like "Passo 1", "Passo 2", "Passo 3" that appear during each phase
-- The whole thing is inside a rounded container with a subtle "REC" or "TUTORIAL" badge
+### Cache para evitar chamadas repetidas
 
-### Technical Implementation
+Cada LID resolvido será cacheado na coluna `metadata` do contato existente quando encontrarmos o match (`{ lid_aliases: ["16089199161420@lid"] }`), e nas próximas mensagens olhamos primeiro o cache antes de chamar a API.
 
-**Single file change**: `src/components/RemixOverlay.tsx`
+## Mudanças
 
-- Use `framer-motion` variants with a timeline approach using `useEffect` + `useState` to cycle through phases
-- Animated cursor component: a `motion.div` with a mouse pointer SVG that moves between coordinates using `animate={{ x, y }}`
-- Click ripple: a small circle that scales up and fades when the cursor "clicks"
-- Menu mockup: styled to match the dark theme from screenshot 1 (dark bg, white text, icons)
-- Modal mockup: styled to match screenshot 2 (Lovable logo, project name input, toggles, Cancel/Remix buttons)
-- Step progress bar at the top showing which step is active
-- The entire animation loops every ~10-12 seconds
+### 1. `supabase/functions/evolution-webhook/index.ts`
+- Nova função `resolveLidToRealNumber(lid, instance, secrets)` que:
+  - Tenta `chat/findContacts` primeiro
+  - Tenta `chat/findChats` como segundo recurso
+  - Retorna `{ phoneNumber, whatsappId }` ou `null`
+- Refatorar o trecho de resolução (linhas ~157-176 em `processMessageUpsert` e ~380-387 em `saveOutgoingMessage`) para chamar esse fallback quando `isLid && !remoteJidAlt && !senderPn`
+- Logar claramente qual estratégia resolveu (`remoteJidAlt` / `senderPn` / `lid-api-resolve` / `lid-fallback`)
 
-### Key UI Elements to Recreate (from screenshots)
+### 2. Migration de limpeza (opcional, com confirmação)
+- Tabela `contacts` tem 1 contato com phone_number = LID (`16089199161420`). Posso:
+  - **(a)** Deixar como está e o fallback novo cria o contato correto na próxima mensagem (vão coexistir)
+  - **(b)** Atualizar esse contato uma vez resolvido o número via API
+  
+  Vou pedir confirmação antes de mexer no contato existente.
 
-**Menu (screenshot 1):**
-- Dark background (`bg-zinc-900`)
-- Items: "Settings", "Remix this project", "Publish to profile", "Rename project", etc.
-- "Remix this project" gets a hover highlight
+### 3. Memória atualizada
+Atualizar `mem://integrations/whatsapp-phone-resolution` documentando a nova ordem: `remoteJidAlt → senderPn → API lookup → remoteJid (último recurso)`.
 
-**Modal (screenshot 2):**
-- Lovable logo icon
-- Title "Remix project"
-- Subtitle text
-- "Project name" input
-- "Include project history" toggle (off)
-- "Include custom knowledge" toggle (cursor turns this ON)
-- Cancel / Remix buttons
+## Fluxo final
 
-### No External Dependencies Needed
+```text
+Webhook recebe mensagem
+        |
+        v
+remoteJid contém @lid?
+   |              |
+   não            sim
+   |              |
+   v              v
+usa remoteJid   tem remoteJidAlt? -> usa
+                tem senderPn?     -> usa
+                cache no contato? -> usa
+                                   |
+                                   v
+                          Chama Evolution API
+                          (findContacts/findChats)
+                                   |
+                                   v
+                          Achou número real?
+                          sim -> usa + cacheia
+                          não -> usa LID (fallback)
+```
 
-Everything uses existing framer-motion + Tailwind + Lucide icons.
+## Pergunta antes de implementar
+
+Sobre o contato já criado errado (`adf94abc... → 16089199161420`):
 
