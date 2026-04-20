@@ -24,6 +24,7 @@ interface NinaSettings {
   audio_response_enabled: boolean;
   evolution_api_url: string | null;
   evolution_api_key: string | null;
+  openai_api_key: string | null;
 }
 
 const VOICE_OPTIONS = [
@@ -121,7 +122,12 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
     audio_response_enabled: false,
     evolution_api_url: null,
     evolution_api_key: null,
+    openai_api_key: null,
   });
+
+  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
+  const [openaiTesting, setOpenaiTesting] = useState(false);
+  const [openaiTestResult, setOpenaiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Auto-save ElevenLabs API key when field loses focus
   const handleElevenLabsKeyBlur = async () => {
@@ -162,6 +168,47 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
       toast.success('Evolution API salva automaticamente');
     } catch (error) {
       console.error('Error auto-saving Evolution API settings:', error);
+    }
+  };
+
+  const handleOpenAIKeyBlur = async () => {
+    if (!settings.id) return;
+    try {
+      await supabase
+        .from('nina_settings')
+        .update({ openai_api_key: settings.openai_api_key, updated_at: new Date().toISOString() } as any)
+        .eq('id', settings.id);
+      toast.success('Chave OpenAI salva');
+    } catch (e) {
+      console.error('Error saving OpenAI key:', e);
+    }
+  };
+
+  const handleTestOpenAIKey = async () => {
+    if (!settings.openai_api_key) {
+      toast.error('Insira a chave da OpenAI primeiro');
+      return;
+    }
+    setOpenaiTesting(true);
+    setOpenaiTestResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-openai-key', {
+        body: { api_key: settings.openai_api_key }
+      });
+      if (error) throw error;
+      if (data?.ok) {
+        setOpenaiTestResult({ ok: true, message: data.message || 'Chave válida ✓' });
+        toast.success('OpenAI conectada! ✅');
+      } else {
+        setOpenaiTestResult({ ok: false, message: data?.error || 'Falha na validação' });
+        toast.error(data?.error || 'Chave inválida');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro';
+      setOpenaiTestResult({ ok: false, message: msg });
+      toast.error('Erro ao testar chave');
+    } finally {
+      setOpenaiTesting(false);
     }
   };
 
@@ -223,6 +270,7 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
         audio_response_enabled: data.audio_response_enabled || false,
         evolution_api_url: (data as any).evolution_api_url ?? null,
         evolution_api_key: (data as any).evolution_api_key ?? null,
+        openai_api_key: (data as any).openai_api_key ?? null,
       });
     } catch (error) {
       console.error('[ApiSettings] Error loading settings:', error);
@@ -258,6 +306,7 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
           audio_response_enabled: settings.audio_response_enabled,
           evolution_api_url: settings.evolution_api_url,
           evolution_api_key: settings.evolution_api_key,
+          openai_api_key: settings.openai_api_key,
           updated_at: new Date().toISOString(),
         } as any)
         .eq('id', settings.id!);
@@ -625,6 +674,66 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
         />
       </div>
 
+
+      {/* OpenAI (Whisper / GPT) */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <FileAudio className="w-5 h-5 text-emerald-600" />
+            <div>
+              <h3 className="font-semibold text-foreground">OpenAI (Whisper)</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Transcrição de áudios recebidos via WhatsApp</p>
+            </div>
+          </div>
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border ${
+            settings.openai_api_key
+              ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+              : 'bg-amber-50 text-amber-600 border-amber-200'
+          }`}>
+            <span className={`h-2 w-2 rounded-full ${settings.openai_api_key ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            {settings.openai_api_key ? 'Configurado' : 'Aguardando'}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">API Key da OpenAI</label>
+            <div className="relative">
+              <input
+                type={showOpenAIKey ? 'text' : 'password'}
+                value={settings.openai_api_key || ''}
+                onChange={(e) => setSettings({ ...settings, openai_api_key: e.target.value })}
+                onBlur={handleOpenAIKeyBlur}
+                placeholder="sk-..."
+                className="w-full px-3 py-2 pr-10 bg-background border border-input rounded-md text-sm font-mono text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOpenAIKey(!showOpenAIKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showOpenAIKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Obtenha em <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">platform.openai.com/api-keys</a>. A chave fica armazenada no banco e é lida pelo transcritor a cada áudio.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" onClick={handleTestOpenAIKey} disabled={openaiTesting || !settings.openai_api_key} className="gap-2">
+              {openaiTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {openaiTesting ? 'Testando...' : 'Testar chave'}
+            </Button>
+            {openaiTestResult && (
+              <div className={`flex items-center gap-2 text-sm ${openaiTestResult.ok ? 'text-emerald-600' : 'text-destructive'}`}>
+                {openaiTestResult.ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                {openaiTestResult.message}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* ElevenLabs */}
       <div className="rounded-xl border border-border bg-card p-6">
