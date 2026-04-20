@@ -1474,11 +1474,31 @@ ${knowledgeContext}
     body: JSON.stringify({
       contact_id: conversation.contact_id,
       conversation_id: conversation.id,
-      user_message: message.content,
+      user_message: effectiveMessageContent,
       ai_response: aiContent,
       current_memory: clientMemory
     })
   }).catch(err => console.error('[Nina] Error triggering analyze-conversation:', err));
+}
+
+function getMessageTextForAgent(message: any, fallbackContent?: string): string {
+  const transcription = message?.metadata?.transcription;
+  if (typeof transcription?.text === 'string' && transcription.text.trim()) {
+    return transcription.text.trim();
+  }
+
+  if (typeof message?.content === 'string') {
+    const trimmedContent = message.content.trim();
+    if (trimmedContent && trimmedContent !== '[Áudio]' && trimmedContent !== '[audio]' && trimmedContent !== '[media]') {
+      return trimmedContent;
+    }
+  }
+
+  if (typeof fallbackContent === 'string' && fallbackContent.trim()) {
+    return fallbackContent.trim();
+  }
+
+  return '';
 }
 
 // Helper function to queue text response with chunking
