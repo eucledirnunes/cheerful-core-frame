@@ -278,7 +278,17 @@ async function combineAndTranscribeMessages(
     if (messageData.type === 'audio' || messageData.messageType === 'audio') {
       const audioMediaId = messageData.audio?.id || messageData.key?.id;
       const instanceId = queueMsg.instance_id;
-      const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+      // Prefer DB-managed key (from Settings UI) with env fallback
+      let openaiApiKey: string | null = null;
+      try {
+        const { data: ns } = await supabase
+          .from('nina_settings')
+          .select('openai_api_key')
+          .limit(1)
+          .maybeSingle();
+        openaiApiKey = (ns as any)?.openai_api_key || null;
+      } catch (_) { /* ignore */ }
+      if (!openaiApiKey) openaiApiKey = Deno.env.get('OPENAI_API_KEY') || null;
 
       const persistTranscription = async (text: string, provider: 'whisper' | 'gemini', extra: Record<string, any> = {}) => {
         const existingMeta = (dbMsg.metadata as Record<string, any>) || {};
