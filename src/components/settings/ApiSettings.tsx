@@ -171,7 +171,46 @@ const ApiSettings = forwardRef<ApiSettingsRef>((props, ref) => {
     }
   };
 
-  const webhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-webhook`;
+  const handleOpenAIKeyBlur = async () => {
+    if (!settings.id) return;
+    try {
+      await supabase
+        .from('nina_settings')
+        .update({ openai_api_key: settings.openai_api_key, updated_at: new Date().toISOString() } as any)
+        .eq('id', settings.id);
+      toast.success('Chave OpenAI salva');
+    } catch (e) {
+      console.error('Error saving OpenAI key:', e);
+    }
+  };
+
+  const handleTestOpenAIKey = async () => {
+    if (!settings.openai_api_key) {
+      toast.error('Insira a chave da OpenAI primeiro');
+      return;
+    }
+    setOpenaiTesting(true);
+    setOpenaiTestResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-openai-key', {
+        body: { api_key: settings.openai_api_key }
+      });
+      if (error) throw error;
+      if (data?.ok) {
+        setOpenaiTestResult({ ok: true, message: data.message || 'Chave válida ✓' });
+        toast.success('OpenAI conectada! ✅');
+      } else {
+        setOpenaiTestResult({ ok: false, message: data?.error || 'Falha na validação' });
+        toast.error(data?.error || 'Chave inválida');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Erro';
+      setOpenaiTestResult({ ok: false, message: msg });
+      toast.error('Erro ao testar chave');
+    } finally {
+      setOpenaiTesting(false);
+    }
+  };
 
   useEffect(() => {
     setTestMessage(`Olá! Esta é uma mensagem de teste do sistema ${companyName}. 🚀`);
