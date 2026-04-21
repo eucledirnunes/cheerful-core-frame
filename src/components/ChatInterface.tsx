@@ -193,8 +193,12 @@ const ChatInterface: React.FC = () => {
 
     const content = inputText.trim();
     setInputText('');
-    
-    await sendMessage(activeChat.id, content);
+
+    const finalContent = operatorName
+      ? `*${operatorName}:* ${content}`
+      : content;
+
+    await sendMessage(activeChat.id, finalContent);
   };
 
   const handleStatusChange = async (status: ConversationStatus) => {
