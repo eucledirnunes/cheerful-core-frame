@@ -1,62 +1,58 @@
 
 
-## Plano: Whisper para transcrição de áudios no chat
+## Plano: Prefixar mensagens enviadas com o nome do operador logado
 
-Você confirmou que já tem uma chave da OpenAI configurada. Vou usá-la (`OPENAI_API_KEY`) — sem precisar de nova secret.
+Toda mensagem enviada pelo operador no Chat ao Vivo será automaticamente prefixada com `*Nome:* ` (negrito do WhatsApp), sem que isso apareça no campo de digitação. O cliente recebe a mensagem identificando quem respondeu.
 
-### Mudanças
+### Comportamento
 
-**1. `supabase/functions/message-grouper/index.ts`**
-- Reescrever `transcribeAudio()` para chamar `https://api.openai.com/v1/audio/transcriptions`:
-  - `model: whisper-1`, `language: pt`, `response_format: json`
-  - Envia o áudio como `multipart/form-data` (Whisper aceita ogg/opus do WhatsApp nativo)
-- Manter **Gemini 2.5 Flash como fallback** se Whisper falhar (rate limit, sem créditos, etc.) — não perde transcrição.
-- Salvar resultado em **dois lugares**:
-  - `messages.content` → continua com a transcrição (Nina lê daqui — compatibilidade total)
-  - `messages.metadata.transcription` → novo bloco `{ text, provider: 'whisper' | 'gemini', transcribed_at }`
-- Logs claros: `[whisper] success`, `[whisper] fallback to gemini`, etc.
+- Operador digita: `Boa tarde! Segue o orçamento.`
+- WhatsApp do cliente recebe: **Mauricio:** Boa tarde! Segue o orçamento.
+- O campo de input continua mostrando só o que foi digitado — o prefixo é invisível para o operador.
+- Na lista de mensagens enviadas (lado direito do chat), a mensagem aparece com o prefixo, igual o cliente vê — assim o time sabe quem mandou o quê no histórico.
 
-**2. `src/types.ts`**
-- Adicionar campo opcional em `UIMessage`: `transcription?: { text: string; provider: string; transcribed_at: string }`
-- Atualizar `transformDBToUIMessage` para extrair `metadata.transcription` quando existir.
+### Como o nome é resolvido
 
-**3. `src/components/ChatInterface.tsx`**
-- Abaixo do player de áudio, novo bloco de transcrição:
-  - Ícone `FileText` + label "Transcrição"
-  - Texto em itálico, cor secundária
-  - Badge pequeno indicando provedor (`whisper` / `gemini`) — útil para debug
-  - Estado "Transcrevendo…" se a mensagem é áudio recente (<60s) e ainda não tem transcrição
+Ordem de prioridade (primeira opção válida vence):
+1. `profiles.full_name` do usuário logado (primeiro nome apenas — "Mauricio Silva" → "Mauricio")
+2. `user.user_metadata.full_name` (fallback se profile ainda não foi carregado)
+3. `user.email` antes do `@` (último recurso)
 
-**4. Áudios antigos (já transcritos por Gemini)**
-- Migration leve: para mensagens `type='audio'` que têm `content` não-vazio mas **não** têm `metadata.transcription`, preencher `metadata.transcription = { text: content, provider: 'gemini', transcribed_at: created_at }`. Assim o histórico já mostra a transcrição no chat sem re-processar nada.
+Se nenhum nome for resolvido, **a mensagem é enviada sem prefixo** (não bloqueia o envio).
 
-**5. Memória**
-- Criar `mem://integrations/whisper-transcription`: provider primário Whisper (OpenAI), fallback Gemini, formato do `metadata.transcription`, exigência da `OPENAI_API_KEY`.
+### Mudanças técnicas
 
-### Fluxo final
+**1. Novo hook `src/hooks/useCurrentOperatorName.ts`**
+- Lê `user` de `useAuth()`
+- Busca `profiles.full_name` via `supabase.from('profiles').select('full_name').eq('user_id', user.id).maybeSingle()`
+- Retorna `{ operatorName: string | null }` — apenas o primeiro nome, capitalizado
+- Cacheia em memória para não consultar a cada envio
 
-```text
-Áudio chega no webhook
-        |
-        v
-message-grouper baixa o base64 (Evolution getBase64)
-        |
-        v
-Tenta Whisper (OpenAI) ──► sucesso ► salva content + metadata.transcription{whisper}
-        │
-        falha
-        ▼
-Fallback Gemini       ──► salva content + metadata.transcription{gemini}
-        |
-        v
-Nina lê content (igual hoje)
-ChatInterface mostra player + bloco "Transcrição: ..."
-```
+**2. `src/components/ChatInterface.tsx`**
+- Importar `useCurrentOperatorName`
+- Em `handleSendMessage`:
+  ```ts
+  const content = inputText.trim();
+  setInputText('');
+  const finalContent = operatorName 
+    ? `*${operatorName}:* ${content}` 
+    : content;
+  await sendMessage(activeChat.id, finalContent);
+  ```
+- O `inputText` continua limpo (sem prefixo visível durante digitação).
 
-### Detalhes técnicos
-- **Custo**: Whisper ≈ $0.006/min. Mensagens curtas de WhatsApp ficam em frações de centavo.
-- **Formato**: Whisper aceita `audio/ogg; codecs=opus` direto — sem conversão.
-- **Limite**: 25MB por arquivo (≈ 25min) — muito além do uso normal de WhatsApp.
-- **Idioma fixo `pt`** para melhorar precisão e velocidade.
-- Não toco no fluxo de **resposta em áudio** (ElevenLabs) — independente.
+### O que NÃO muda
+
+- Mensagens da Nina (IA) — continuam sem prefixo.
+- Mensagens recebidas do cliente — não tocadas.
+- Edge function `send-evolution-message` — não muda; recebe o conteúdo já prefixado.
+- Layout, cores, componentes visuais — intactos.
+- Histórico antigo — não é reescrito (apenas mensagens novas levam o prefixo).
+
+### Edge cases tratados
+
+- **Operador sem nome no profile**: envia sem prefixo (não quebra fluxo).
+- **Mensagem só com espaços**: já é bloqueada por `inputText.trim()`.
+- **Áudio / anexos**: este plano cobre apenas texto. Áudios enviados pelo operador (se houver no futuro) não recebem prefixo nesta iteração.
+- **Conversa em modo Nina (IA ativa)**: o prefixo só é aplicado quando o operador realmente envia algo manual — a IA continua respondendo sem prefixo.
 
