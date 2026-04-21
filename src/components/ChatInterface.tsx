@@ -9,6 +9,7 @@ import { Button } from './Button';
 import { useConversations } from '../hooks/useConversations';
 import { toast } from 'sonner';
 import { useCompanySettings } from '@/hooks/useCompanySettings';
+import { useCurrentOperatorName } from '@/hooks/useCurrentOperatorName';
 import { api } from '@/services/api';
 import { TagSelector } from './TagSelector';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
@@ -23,6 +24,7 @@ import {
 const ChatInterface: React.FC = () => {
   const { conversations, loading, sendMessage, updateStatus, markAsRead, assignConversation } = useConversations();
   const { sdrName, companyName } = useCompanySettings();
+  const { operatorName } = useCurrentOperatorName();
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [showProfileInfo, setShowProfileInfo] = useState(false);
@@ -193,8 +195,12 @@ const ChatInterface: React.FC = () => {
 
     const content = inputText.trim();
     setInputText('');
-    
-    await sendMessage(activeChat.id, content);
+
+    const finalContent = operatorName
+      ? `*${operatorName}:* ${content}`
+      : content;
+
+    await sendMessage(activeChat.id, finalContent);
   };
 
   const handleStatusChange = async (status: ConversationStatus) => {
