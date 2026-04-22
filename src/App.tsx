@@ -9,6 +9,7 @@ import Settings from './components/Settings';
 import Team from './components/Team';
 import Scheduling from './components/Scheduling';
 import Kanban from './components/Kanban';
+import Backup from './components/Backup';
 
 import Auth from './pages/Auth';
 
@@ -78,6 +79,7 @@ const App: React.FC = () => {
                   <Route path="/scheduling" element={<Scheduling />} />
                   <Route path="/team" element={<Team />} />
                   <Route path="/settings" element={<Settings />} />
+                  <Route path="/backup" element={<Backup />} />
                   
                 </Route>
                 
