@@ -81,6 +81,20 @@ const SidebarContent = () => {
   const navigate = useNavigate();
   const currentPath = location.pathname.substring(1) || 'dashboard';
   const { open, setOpen } = useSidebar();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('role', 'admin')
+      .maybeSingle()
+      .then(({ data }) => setIsAdmin(!!data));
+  }, [user]);
+
+  const menuItems = isAdmin ? [...baseMenuItems, ...adminMenuItems] : baseMenuItems;
 
   const links = menuItems.map(item => ({
     label: item.label,
