@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
-import { LayoutDashboard, MessageSquare, Users, Settings as SettingsIcon, LogOut, ShieldCheck, Calendar, Kanban, ShieldAlert } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { LayoutDashboard, MessageSquare, Users, Settings as SettingsIcon, LogOut, ShieldCheck, Calendar, Kanban, ShieldAlert, DatabaseBackup } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCompanySettings } from '@/hooks/useCompanySettings';
 import { useDesignSettings } from '@/hooks/useDesignSettings';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 import { Sidebar, SidebarBody, SidebarLink, useSidebar } from '@/components/ui/sidebar';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 
-const menuItems = [
+const baseMenuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'pipeline', label: 'Pipeline', icon: Kanban },
   { id: 'chat', label: 'Chat Ao Vivo', icon: MessageSquare },
@@ -18,6 +19,10 @@ const menuItems = [
   { id: 'scheduling', label: 'Agendamentos', icon: Calendar },
   { id: 'team', label: 'Equipe', icon: ShieldCheck },
   { id: 'settings', label: 'Configurações', icon: SettingsIcon },
+];
+
+const adminMenuItems = [
+  { id: 'backup', label: 'Backup & Export', icon: DatabaseBackup },
 ];
 
 const Logo = () => {
@@ -76,6 +81,20 @@ const SidebarContent = () => {
   const navigate = useNavigate();
   const currentPath = location.pathname.substring(1) || 'dashboard';
   const { open, setOpen } = useSidebar();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('role', 'admin')
+      .maybeSingle()
+      .then(({ data }) => setIsAdmin(!!data));
+  }, [user]);
+
+  const menuItems = isAdmin ? [...baseMenuItems, ...adminMenuItems] : baseMenuItems;
 
   const links = menuItems.map(item => ({
     label: item.label,
