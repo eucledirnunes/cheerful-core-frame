@@ -1898,6 +1898,10 @@ export type Database = {
         Args: { _company_id: string }
         Returns: boolean
       }
+      check_company_can_add_whatsapp_instance: {
+        Args: { _company_id: string }
+        Returns: boolean
+      }
       claim_message_processing_batch: {
         Args: { p_limit?: number }
         Returns: {
