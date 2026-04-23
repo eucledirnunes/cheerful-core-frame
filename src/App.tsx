@@ -85,8 +85,8 @@ const App: React.FC = () => {
                   
                 </Route>
                 
-                {/* Catch all - redirect to dashboard */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                {/* Catch all - redirect to landing */}
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               <Toaster 
                 position="top-right"
