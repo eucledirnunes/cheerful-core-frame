@@ -73,6 +73,7 @@ const SuperAdmin: React.FC = () => {
   const [companyDialogOpen, setCompanyDialogOpen] = useState(false);
   const [subDialogOpen, setSubDialogOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [resetCompany, setResetCompany] = useState<Company | null>(null);
 
   useEffect(() => {
     if (!user) return;
