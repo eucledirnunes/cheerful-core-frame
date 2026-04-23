@@ -10,6 +10,7 @@ import Team from './components/Team';
 import Scheduling from './components/Scheduling';
 import Kanban from './components/Kanban';
 import Backup from './components/Backup';
+import SuperAdmin from './pages/SuperAdmin';
 
 import Auth from './pages/Auth';
 import Landing from './pages/Landing';
@@ -82,6 +83,7 @@ const App: React.FC = () => {
                   <Route path="/team" element={<Team />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/backup" element={<Backup />} />
+                  <Route path="/superadmin" element={<SuperAdmin />} />
                   
                 </Route>
                 
