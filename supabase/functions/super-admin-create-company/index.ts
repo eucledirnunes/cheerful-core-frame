@@ -63,6 +63,7 @@ serve(async (req) => {
       plan_id,
       trial_days = 14,
       status = 'active',
+      temp_password, // NOVO: senha temporária opcional
     } = await req.json()
 
     if (!company_name || !admin_email || !admin_full_name) {
@@ -71,6 +72,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
+
+    const useTempPassword = typeof temp_password === 'string' && temp_password.trim().length >= 6
 
     // 1) Cria a empresa
     const { data: company, error: companyError } = await supabaseAdmin
@@ -110,11 +113,86 @@ serve(async (req) => {
       if (subError) console.error('Erro ao criar subscription:', subError)
     }
 
-    // 3) Gera link de convite para o admin com company_id e invited_role no metadata
     const siteUrl = req.headers.get('origin') || req.headers.get('referer')?.replace(/\/$/, '') || ''
     let inviteLink: string | null = null
     let invitedUserId: string | null = null
+    let createdWithPassword = false
 
+    // 3a) MODO SENHA TEMPORÁRIA: cria usuário diretamente com senha + auto confirma email
+    if (useTempPassword) {
+      const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        email: admin_email,
+        password: temp_password.trim(),
+        email_confirm: true,
+        user_metadata: {
+          full_name: admin_full_name,
+          company_id: company.id,
+          invited_role: 'admin',
+        },
+      })
+
+      if (createErr) {
+        // Se usuário já existe, atualiza senha
+        if (createErr.code === 'email_exists' || createErr.status === 422) {
+          const { data: list } = await supabaseAdmin.auth.admin.listUsers()
+          const existing = list?.users.find((u) => u.email?.toLowerCase() === admin_email.toLowerCase())
+          if (existing) {
+            invitedUserId = existing.id
+            await supabaseAdmin.auth.admin.updateUserById(existing.id, {
+              password: temp_password.trim(),
+              email_confirm: true,
+            })
+            createdWithPassword = true
+          } else {
+            return new Response(JSON.stringify({
+              error: `Empresa criada mas falha ao criar usuário: ${createErr.message}`,
+              company_id: company.id,
+            }), { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+          }
+        } else {
+          console.error('Erro ao criar usuário com senha:', createErr)
+          return new Response(JSON.stringify({
+            error: `Empresa criada mas falha ao criar usuário: ${createErr.message}`,
+            company_id: company.id,
+          }), { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+        }
+      } else {
+        invitedUserId = created?.user?.id ?? null
+        createdWithPassword = true
+      }
+
+      if (invitedUserId) {
+        await supabaseAdmin.from('profiles').upsert(
+          {
+            user_id: invitedUserId,
+            full_name: admin_full_name,
+            company_id: company.id,
+            must_change_password: true, // força troca no 1º login
+          },
+          { onConflict: 'user_id' }
+        )
+        await supabaseAdmin.from('user_roles').upsert(
+          { user_id: invitedUserId, role: 'admin' },
+          { onConflict: 'user_id,role', ignoreDuplicates: true }
+        )
+        await supabaseAdmin.from('companies')
+          .update({ owner_user_id: invitedUserId })
+          .eq('id', company.id)
+          .is('owner_user_id', null)
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        company_id: company.id,
+        user_id: invitedUserId,
+        created_with_password: createdWithPassword,
+        login_url: `${siteUrl}/auth`,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // 3b) MODO INVITE (link mágico)
     const { data: newInvite, error: inviteError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'invite',
       email: admin_email,
@@ -129,7 +207,6 @@ serve(async (req) => {
     })
 
     if (inviteError && (inviteError.code === 'email_exists' || inviteError.status === 422)) {
-      // Usuário já existe — gera magic link e atualiza profile/role manualmente
       const { data: magic } = await supabaseAdmin.auth.admin.generateLink({
         type: 'magiclink',
         email: admin_email,
