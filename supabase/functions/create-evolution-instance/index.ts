@@ -81,12 +81,16 @@ serve(async (req) => {
 
     // A Evolution pode retornar 201 ou 200
     if (!createRes.ok && createRes.status !== 200 && createRes.status !== 201) {
+      const isDuplicate = /already in use/i.test(createText) || createRes.status === 403;
       return new Response(JSON.stringify({
         success: false,
-        error: `Erro ao criar instância na Evolution API: ${createRes.status}`,
+        error: isDuplicate
+          ? `Já existe uma instância com o nome "${instance_name}" na Evolution API. Escolha outro nome ou remova a instância existente.`
+          : `Erro ao criar instância na Evolution API: ${createRes.status}`,
+        code: isDuplicate ? 'INSTANCE_NAME_EXISTS' : undefined,
         details: createText,
       }), {
-        status: 400,
+        status: isDuplicate ? 409 : 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
