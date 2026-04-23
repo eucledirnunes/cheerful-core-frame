@@ -20,7 +20,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Plus, Building2, Package, Users, Pencil, Trash2, ShieldAlert } from 'lucide-react';
+import { Loader2, Plus, Building2, Package, Users, Pencil, Trash2, ShieldAlert, KeyRound } from 'lucide-react';
 
 interface Plan {
   id: string;
