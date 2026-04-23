@@ -95,7 +95,7 @@ const Landing: React.FC = () => {
             <span className="text-white/40">Sua equipe fecha</span>
           </h1>
           <p className="text-lg md:text-xl text-white/60 max-w-2xl font-light leading-relaxed mb-12">
-            Talvi é a plataforma da AIVVO para empresas que vendem, atendem e agendam pelo WhatsApp — com IA que trabalha junto com sua equipe, não no lugar dela.
+            Talvi organiza seu atendimento, responde clientes automaticamente e transforma conversas em vendas — sem aumentar sua equipe.
           </p>
           <div className="flex flex-col sm:flex-row gap-4">
             <a
