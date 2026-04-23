@@ -481,11 +481,15 @@ const CompanyDialog: React.FC<{
   const [plans, setPlans] = useState<Plan[]>([]);
   const [saving, setSaving] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [accessMode, setAccessMode] = useState<'invite' | 'password'>('invite');
+  const [tempPassword, setTempPassword] = useState('');
+  const [createdLogin, setCreatedLogin] = useState<{ email: string; password: string; loginUrl: string } | null>(null);
 
   useEffect(() => {
     if (company) setForm(company);
     else setForm({ name: '', slug: '', status: 'active' });
-    setAdminEmail(''); setAdminName(''); setPlanId(''); setSubStatus('active'); setTrialDays(14); setInviteLink(null);
+    setAdminEmail(''); setAdminName(''); setPlanId(''); setSubStatus('active'); setTrialDays(14);
+    setInviteLink(null); setAccessMode('invite'); setTempPassword(''); setCreatedLogin(null);
   }, [company, open]);
 
   useEffect(() => {
