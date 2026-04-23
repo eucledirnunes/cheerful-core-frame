@@ -66,6 +66,26 @@ export function AddInstanceDialog({ open, onOpenChange, evolutionApiUrl, evoluti
       return;
     }
 
+    // Valida limite de instâncias do plano
+    try {
+      const { data: prof } = await supabase.auth.getUser();
+      const userId = prof.user?.id;
+      if (userId) {
+        const { data: profile } = await supabase
+          .from('profiles').select('company_id').eq('user_id', userId).maybeSingle();
+        const companyId = profile?.company_id;
+        if (companyId) {
+          const { data: canAdd } = await supabase.rpc('check_company_can_add_whatsapp_instance', { _company_id: companyId });
+          if (canAdd === false) {
+            toast.error('Limite de instâncias WhatsApp do plano atingido. Atualize seu plano.');
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Não foi possível validar limite de instâncias:', e);
+    }
+
     setIsCreating(true);
     setStep('creating');
 
