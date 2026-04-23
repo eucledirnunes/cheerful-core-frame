@@ -863,4 +863,158 @@ const SubscriptionDialog: React.FC<{
   );
 };
 
+// =================== Reset Password Dialog ===================
+const ResetPasswordDialog: React.FC<{
+  company: Company | null;
+  onOpenChange: (b: boolean) => void;
+}> = ({ company, onOpenChange }) => {
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState<{ email: string; password: string; loginUrl: string } | null>(null);
+  const [adminEmail, setAdminEmail] = useState<string>('');
+
+  useEffect(() => {
+    setPassword(''); setDone(null); setAdminEmail('');
+    if (!company) return;
+    // Busca e-mail do owner_user_id da empresa
+    if (company.owner_user_id) {
+      supabase.from('profiles').select('full_name, user_id').eq('user_id', company.owner_user_id).maybeSingle()
+        .then(async () => {
+          // Não temos email no profile — buscar pela team_members ou via auth admin (não disponível no client)
+          // Usar team_members que tenha email/admin
+          const { data: tm } = await supabase
+            .from('team_members')
+            .select('email')
+            .eq('company_id', company.id)
+            .eq('role', 'admin')
+            .limit(1)
+            .maybeSingle();
+          if (tm?.email) setAdminEmail(tm.email);
+        });
+    }
+  }, [company]);
+
+  if (!company) return null;
+
+  const generate = () => {
+    const rnd = Math.random().toString(36).slice(-10) + 'A1!';
+    setPassword(rnd);
+  };
+
+  const save = async () => {
+    if (password.trim().length < 6) {
+      toast.error('Senha precisa de no mínimo 6 caracteres');
+      return;
+    }
+    setSaving(true);
+    const { data, error } = await supabase.functions.invoke('super-admin-reset-user-password', {
+      body: {
+        target_user_id: company.owner_user_id,
+        target_email: adminEmail || undefined,
+        new_password: password.trim(),
+      },
+    });
+    setSaving(false);
+    if (error || data?.error) {
+      toast.error(data?.error || error?.message || 'Erro ao resetar senha');
+      return;
+    }
+    toast.success('Senha resetada');
+    setDone({
+      email: adminEmail || '(e-mail do admin)',
+      password: password.trim(),
+      loginUrl: `${window.location.origin}/auth`,
+    });
+  };
+
+  return (
+    <Dialog open={!!company} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Resetar senha — {company.name}</DialogTitle>
+          <DialogDescription>
+            Define uma nova senha temporária para o admin desta empresa. Ele será obrigado a trocá-la no próximo acesso.
+          </DialogDescription>
+        </DialogHeader>
+
+        {done ? (
+          <div className="space-y-4 py-4">
+            <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 space-y-3">
+              <p className="text-sm font-medium">Nova senha definida</p>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground w-20">URL:</span>
+                  <Input value={done.loginUrl} readOnly className="text-xs font-mono flex-1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground w-20">E-mail:</span>
+                  <Input value={done.email} readOnly className="text-xs font-mono flex-1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground w-20">Senha:</span>
+                  <Input value={done.password} readOnly className="text-xs font-mono flex-1" />
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `Acesse: ${done.loginUrl}\nE-mail: ${done.email}\nNova senha: ${done.password}`
+                  );
+                  toast.success('Copiado');
+                }}
+              >
+                Copiar tudo
+              </Button>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => onOpenChange(false)}>Concluir</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label>E-mail do admin</Label>
+                <Input
+                  type="email"
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  placeholder="admin@empresa.com"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Se o usuário admin já estiver vinculado à empresa, basta deixar como está. Caso contrário, informe o e-mail.
+                </p>
+              </div>
+              <div>
+                <Label>Nova senha *</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    className="font-mono"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={generate}>Gerar</Button>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+              <Button onClick={save} disabled={saving}>
+                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Resetar senha
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export default SuperAdmin;
+
