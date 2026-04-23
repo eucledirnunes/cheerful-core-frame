@@ -465,65 +465,197 @@ const CompanyDialog: React.FC<{
   onSaved: () => void;
 }> = ({ open, onOpenChange, company, onSaved }) => {
   const [form, setForm] = useState<Partial<Company>>({});
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminName, setAdminName] = useState('');
+  const [planId, setPlanId] = useState<string>('');
+  const [subStatus, setSubStatus] = useState<string>('active');
+  const [trialDays, setTrialDays] = useState(14);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [saving, setSaving] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
 
   useEffect(() => {
     if (company) setForm(company);
     else setForm({ name: '', slug: '', status: 'active' });
+    setAdminEmail(''); setAdminName(''); setPlanId(''); setSubStatus('active'); setTrialDays(14); setInviteLink(null);
   }, [company, open]);
+
+  useEffect(() => {
+    if (!open || company) return;
+    supabase.from('plans').select('*').eq('is_active', true).order('display_order')
+      .then(({ data }) => {
+        const list = (data as Plan[]) || [];
+        setPlans(list);
+        const trial = list.find((p) => p.is_trial);
+        if (trial) { setPlanId(trial.id); setSubStatus('trial'); setTrialDays(trial.trial_days || 14); }
+        else if (list[0]) setPlanId(list[0].id);
+      });
+  }, [open, company]);
 
   const save = async () => {
     if (!form.name) { toast.error('Nome é obrigatório'); return; }
+
+    if (company) {
+      // EDIT — apenas dados da empresa
+      setSaving(true);
+      const { error } = await supabase.from('companies').update({
+        name: form.name, slug: form.slug || null, status: form.status || 'active',
+      }).eq('id', company.id);
+      setSaving(false);
+      if (error) { toast.error(error.message); return; }
+      toast.success('Empresa atualizada');
+      onOpenChange(false);
+      onSaved();
+      return;
+    }
+
+    // CREATE — chama edge function que cria empresa + assinatura + convida admin
+    if (!adminEmail.trim() || !adminName.trim()) {
+      toast.error('Email e nome do admin são obrigatórios');
+      return;
+    }
+    if (!planId) { toast.error('Selecione um plano'); return; }
+
     setSaving(true);
-    const payload = {
-      name: form.name,
-      slug: form.slug || null,
-      status: form.status || 'active',
-    };
-    const { error } = company
-      ? await supabase.from('companies').update(payload).eq('id', company.id)
-      : await supabase.from('companies').insert(payload);
+    const { data, error } = await supabase.functions.invoke('super-admin-create-company', {
+      body: {
+        company_name: form.name,
+        slug: form.slug || null,
+        admin_email: adminEmail.trim(),
+        admin_full_name: adminName.trim(),
+        plan_id: planId,
+        status: subStatus,
+        trial_days: trialDays,
+      },
+    });
     setSaving(false);
-    if (error) { toast.error(error.message); return; }
-    toast.success(company ? 'Empresa atualizada' : 'Empresa criada');
-    onOpenChange(false);
+    if (error || data?.error) {
+      toast.error(data?.error || error?.message || 'Erro ao criar empresa');
+      return;
+    }
+    toast.success('Empresa criada e admin convidado');
+    if (data?.invite_link) {
+      setInviteLink(data.invite_link);
+    } else {
+      onOpenChange(false);
+    }
     onSaved();
+  };
+
+  const copyLink = () => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink);
+    toast.success('Link copiado');
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{company ? 'Editar Empresa' : 'Nova Empresa'}</DialogTitle>
           <DialogDescription>
-            Após criar, vá em <strong>Assinaturas</strong> para vincular um plano.
+            {company
+              ? 'Atualize os dados da empresa.'
+              : 'Cadastre a empresa e convide o admin inicial. No primeiro acesso ele define a senha e poderá gerenciar usuários.'}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
-          <div>
-            <Label>Nome</Label>
-            <Input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+
+        {inviteLink ? (
+          <div className="space-y-4 py-4">
+            <div className="p-4 rounded-lg border border-primary/30 bg-primary/5">
+              <p className="text-sm font-medium mb-2">Link de acesso do admin</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                Envie este link para <strong>{adminEmail}</strong>. Ele define a senha e entra como admin da empresa.
+              </p>
+              <div className="flex gap-2">
+                <Input value={inviteLink} readOnly className="text-xs font-mono" />
+                <Button onClick={copyLink} size="sm">Copiar</Button>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => onOpenChange(false)}>Concluir</Button>
+            </DialogFooter>
           </div>
-          <div>
-            <Label>Slug (opcional)</Label>
-            <Input value={form.slug || ''} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
-          </div>
-          <div>
-            <Label>Status</Label>
-            <Select value={form.status || 'active'} onValueChange={(v) => setForm({ ...form, status: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Ativa</SelectItem>
-                <SelectItem value="suspended">Suspensa</SelectItem>
-                <SelectItem value="cancelled">Cancelada</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Salvar</Button>
-        </DialogFooter>
+        ) : (
+          <>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label>Nome da empresa *</Label>
+                <Input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Acme Ltda" />
+              </div>
+              <div>
+                <Label>Slug (opcional)</Label>
+                <Input value={form.slug || ''} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="acme" />
+              </div>
+
+              {company ? (
+                <div>
+                  <Label>Status</Label>
+                  <Select value={form.status || 'active'} onValueChange={(v) => setForm({ ...form, status: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Ativa</SelectItem>
+                      <SelectItem value="suspended">Suspensa</SelectItem>
+                      <SelectItem value="cancelled">Cancelada</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <>
+                  <div className="border-t border-border pt-4 space-y-4">
+                    <p className="text-sm font-medium text-foreground">Admin inicial</p>
+                    <div>
+                      <Label>Nome do admin *</Label>
+                      <Input value={adminName} onChange={(e) => setAdminName(e.target.value)} placeholder="João Silva" />
+                    </div>
+                    <div>
+                      <Label>E-mail do admin *</Label>
+                      <Input type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="joao@acme.com" />
+                    </div>
+                  </div>
+
+                  <div className="border-t border-border pt-4 space-y-4">
+                    <p className="text-sm font-medium text-foreground">Plano</p>
+                    <div>
+                      <Label>Plano *</Label>
+                      <Select value={planId} onValueChange={setPlanId}>
+                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                        <SelectContent>
+                          {plans.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label>Status</Label>
+                        <Select value={subStatus} onValueChange={setSubStatus}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="trial">Trial</SelectItem>
+                            <SelectItem value="active">Ativa</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {subStatus === 'trial' && (
+                        <div>
+                          <Label>Dias de trial</Label>
+                          <Input type="number" value={trialDays} onChange={(e) => setTrialDays(Number(e.target.value))} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+              <Button onClick={save} disabled={saving}>
+                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {company ? 'Salvar' : 'Criar e convidar admin'}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
