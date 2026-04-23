@@ -18,7 +18,7 @@ serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    const { name, email, phone, role, team_id, function_id, weight } = await req.json()
+    const { name, email, phone, role, team_id, function_id, weight, regenerate } = await req.json()
 
     if (!email || !name) {
       return new Response(JSON.stringify({ error: 'name e email são obrigatórios' }), {
@@ -27,17 +27,54 @@ serve(async (req) => {
       })
     }
 
+    // Identifica o usuário que está convidando -> obtém company_id
+    const authHeader = req.headers.get('Authorization')
+    let inviterCompanyId: string | null = null
+    if (authHeader) {
+      const userClient = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } }
+      )
+      const { data: { user } } = await userClient.auth.getUser()
+      if (user) {
+        const { data: prof } = await supabaseAdmin
+          .from('profiles').select('company_id').eq('user_id', user.id).maybeSingle()
+        inviterCompanyId = prof?.company_id ?? null
+
+        // Validar limite de usuários do plano (apenas em convites novos, não regenerate)
+        if (inviterCompanyId && !regenerate) {
+          const { data: canAdd } = await supabaseAdmin
+            .rpc('check_company_can_add_user', { _company_id: inviterCompanyId })
+          if (canAdd === false) {
+            return new Response(JSON.stringify({
+              error: 'Limite de usuários do plano atingido. Atualize seu plano para adicionar mais membros.',
+            }), {
+              status: 403,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+          }
+        }
+      }
+    }
+
     // 1. Tentar gerar link de convite (novo usuário) ou magic link (usuário existente)
     let inviteData: any = null
     let inviteLink: string | null = null
 
     const siteUrl = req.headers.get('origin') || req.headers.get('referer')?.replace(/\/$/, '') || ''
 
+    const inviteMeta: Record<string, unknown> = { full_name: name }
+    if (inviterCompanyId) {
+      inviteMeta.company_id = inviterCompanyId
+      inviteMeta.invited_role = 'user'
+    }
+
     const { data: newInvite, error: inviteError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'invite',
       email,
-      options: { 
-        data: { full_name: name },
+      options: {
+        data: inviteMeta,
         redirectTo: `${siteUrl}/set-password`,
       },
     })

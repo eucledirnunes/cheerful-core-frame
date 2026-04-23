@@ -95,8 +95,23 @@ const Team: React.FC = () => {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     try {
+      // Valida limite de usuários do plano antes de tentar convidar
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: prof } = await supabase
+          .from('profiles').select('company_id').eq('user_id', user.id).maybeSingle();
+        if (prof?.company_id) {
+          const { data: canAdd } = await supabase
+            .rpc('check_company_can_add_user', { _company_id: prof.company_id });
+          if (canAdd === false) {
+            toast.error('Limite de usuários do plano atingido. Atualize seu plano para adicionar mais membros.');
+            return;
+          }
+        }
+      }
+
       const { data, error } = await supabase.functions.invoke('invite-team-member', {
         body: {
           name: formData.name,
