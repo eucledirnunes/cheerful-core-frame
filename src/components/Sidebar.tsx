@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, MessageSquare, Users, Settings as SettingsIcon, LogOut, ShieldCheck, Calendar, Kanban, ShieldAlert, DatabaseBackup } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, Users, Settings as SettingsIcon, LogOut, ShieldCheck, Calendar, Kanban, ShieldAlert, DatabaseBackup, Crown } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCompanySettings } from '@/hooks/useCompanySettings';
 import { useDesignSettings } from '@/hooks/useDesignSettings';
@@ -23,6 +23,10 @@ const baseMenuItems = [
 
 const adminMenuItems = [
   { id: 'backup', label: 'Backup & Export', icon: DatabaseBackup },
+];
+
+const superAdminMenuItems = [
+  { id: 'superadmin', label: 'Super Admin', icon: Crown },
 ];
 
 const Logo = () => {
@@ -82,6 +86,7 @@ const SidebarContent = () => {
   const currentPath = location.pathname.substring(1) || 'dashboard';
   const { open, setOpen } = useSidebar();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -89,12 +94,19 @@ const SidebarContent = () => {
       .from('user_roles')
       .select('role')
       .eq('user_id', user.id)
-      .eq('role', 'admin')
-      .maybeSingle()
-      .then(({ data }) => setIsAdmin(!!data));
+      .in('role', ['admin', 'super_admin'])
+      .then(({ data }) => {
+        const roles = (data || []).map((r: any) => r.role);
+        setIsAdmin(roles.includes('admin') || roles.includes('super_admin'));
+        setIsSuperAdmin(roles.includes('super_admin'));
+      });
   }, [user]);
 
-  const menuItems = isAdmin ? [...baseMenuItems, ...adminMenuItems] : baseMenuItems;
+  const menuItems = [
+    ...baseMenuItems,
+    ...(isAdmin ? adminMenuItems : []),
+    ...(isSuperAdmin ? superAdminMenuItems : []),
+  ];
 
   const links = menuItems.map(item => ({
     label: item.label,
