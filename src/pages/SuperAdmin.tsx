@@ -583,7 +583,46 @@ const CompanyDialog: React.FC<{
           </DialogDescription>
         </DialogHeader>
 
-        {inviteLink ? (
+        {createdLogin ? (
+          <div className="space-y-4 py-4">
+            <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 space-y-3">
+              <p className="text-sm font-medium">Credenciais de acesso criadas</p>
+              <p className="text-xs text-muted-foreground">
+                Envie estas credenciais para <strong>{adminName}</strong>. Ele entrará no sistema usando a senha temporária e poderá trocar por uma definitiva depois.
+              </p>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground w-20">URL:</span>
+                  <Input value={createdLogin.loginUrl} readOnly className="text-xs font-mono flex-1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground w-20">E-mail:</span>
+                  <Input value={createdLogin.email} readOnly className="text-xs font-mono flex-1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground w-20">Senha:</span>
+                  <Input value={createdLogin.password} readOnly className="text-xs font-mono flex-1" />
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `Acesse: ${createdLogin.loginUrl}\nE-mail: ${createdLogin.email}\nSenha temporária: ${createdLogin.password}`
+                  );
+                  toast.success('Credenciais copiadas');
+                }}
+              >
+                Copiar tudo
+              </Button>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => onOpenChange(false)}>Concluir</Button>
+            </DialogFooter>
+          </div>
+        ) : inviteLink ? (
           <div className="space-y-4 py-4">
             <div className="p-4 rounded-lg border border-primary/30 bg-primary/5">
               <p className="text-sm font-medium mb-2">Link de acesso do admin</p>
@@ -635,6 +674,48 @@ const CompanyDialog: React.FC<{
                       <Label>E-mail do admin *</Label>
                       <Input type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="joao@acme.com" />
                     </div>
+
+                    <div>
+                      <Label>Modo de acesso</Label>
+                      <Select value={accessMode} onValueChange={(v) => setAccessMode(v as 'invite' | 'password')}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="password">Senha temporária (acesso imediato)</SelectItem>
+                          <SelectItem value="invite">Link de convite por e-mail</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {accessMode === 'password'
+                          ? 'O admin entra direto com a senha que você definir. Será obrigado a trocá-la no 1º acesso.'
+                          : 'Será gerado um link de ativação. O admin define a própria senha ao abrir.'}
+                      </p>
+                    </div>
+
+                    {accessMode === 'password' && (
+                      <div>
+                        <Label>Senha temporária *</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            type="text"
+                            value={tempPassword}
+                            onChange={(e) => setTempPassword(e.target.value)}
+                            placeholder="Mínimo 6 caracteres"
+                            className="font-mono"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const rnd = Math.random().toString(36).slice(-10) + 'A1!';
+                              setTempPassword(rnd);
+                            }}
+                          >
+                            Gerar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="border-t border-border pt-4 space-y-4">
@@ -674,7 +755,7 @@ const CompanyDialog: React.FC<{
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
               <Button onClick={save} disabled={saving}>
                 {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {company ? 'Salvar' : 'Criar e convidar admin'}
+                {company ? 'Salvar' : (accessMode === 'password' ? 'Criar com senha temporária' : 'Criar e enviar convite')}
               </Button>
             </DialogFooter>
           </>
