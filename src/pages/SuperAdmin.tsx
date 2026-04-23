@@ -189,6 +189,9 @@ const SuperAdmin: React.FC = () => {
                             {new Date(c.created_at).toLocaleDateString('pt-BR')}
                           </TableCell>
                           <TableCell className="text-right">
+                            <Button size="sm" variant="ghost" title="Resetar senha do admin" onClick={() => setResetCompany(c)}>
+                              <KeyRound className="w-3.5 h-3.5" />
+                            </Button>
                             <Button size="sm" variant="ghost" onClick={() => { setEditingCompany(c); setCompanyDialogOpen(true); }}>
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
