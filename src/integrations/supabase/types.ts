@@ -1290,6 +1290,7 @@ export type Database = {
           max_contacts: number | null
           max_messages_per_month: number | null
           max_team_members: number | null
+          max_users: number | null
           max_whatsapp_instances: number | null
           name: string
           price_monthly: number | null
@@ -1308,6 +1309,7 @@ export type Database = {
           max_contacts?: number | null
           max_messages_per_month?: number | null
           max_team_members?: number | null
+          max_users?: number | null
           max_whatsapp_instances?: number | null
           name: string
           price_monthly?: number | null
@@ -1326,6 +1328,7 @@ export type Database = {
           max_contacts?: number | null
           max_messages_per_month?: number | null
           max_team_members?: number | null
+          max_users?: number | null
           max_whatsapp_instances?: number | null
           name?: string
           price_monthly?: number | null
@@ -1891,6 +1894,10 @@ export type Database = {
       }
     }
     Functions: {
+      check_company_can_add_user: {
+        Args: { _company_id: string }
+        Returns: boolean
+      }
       claim_message_processing_batch: {
         Args: { p_limit?: number }
         Returns: {
@@ -1970,6 +1977,23 @@ export type Database = {
       cleanup_processed_message_queue: { Args: never; Returns: undefined }
       cleanup_processed_queues: { Args: never; Returns: undefined }
       get_auth_user_id: { Args: never; Returns: string }
+      get_company_limits: {
+        Args: { _company_id: string }
+        Returns: {
+          current_contacts: number
+          current_instances: number
+          current_users: number
+          max_contacts: number
+          max_messages_per_month: number
+          max_users: number
+          max_whatsapp_instances: number
+          plan_id: string
+          plan_name: string
+          plan_slug: string
+          status: string
+          trial_ends_at: string
+        }[]
+      }
       get_next_closer: {
         Args: never
         Returns: {
