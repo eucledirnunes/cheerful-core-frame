@@ -29,6 +29,34 @@ serve(async (req) => {
 
     const baseUrl = api_url.replace(/\/$/, '');
 
+    // 0. Verificar se já existe instância com esse nome na Evolution API
+    try {
+      const checkRes = await fetch(`${baseUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instance_name)}`, {
+        method: 'GET',
+        headers: { 'apikey': api_key },
+      });
+      if (checkRes.ok) {
+        const checkText = await checkRes.text();
+        let checkData: any = null;
+        try { checkData = JSON.parse(checkText); } catch {}
+        const exists = Array.isArray(checkData)
+          ? checkData.some((i: any) => i?.name === instance_name || i?.instance?.instanceName === instance_name || i?.instanceName === instance_name)
+          : !!(checkData && (checkData.name === instance_name || checkData.instanceName === instance_name));
+        if (exists) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: `Já existe uma instância com o nome "${instance_name}" na Evolution API. Escolha outro nome ou remova a instância existente.`,
+            code: 'INSTANCE_NAME_EXISTS',
+          }), {
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+    } catch (checkErr) {
+      console.warn('[create-evolution-instance] Pre-check failed (non-fatal):', checkErr);
+    }
+
     // 1. Criar a instância na Evolution API
     console.log(`[create-evolution-instance] Creating instance: ${instance_name} at ${baseUrl}`);
     const createRes = await fetch(`${baseUrl}/instance/create`, {
@@ -53,12 +81,16 @@ serve(async (req) => {
 
     // A Evolution pode retornar 201 ou 200
     if (!createRes.ok && createRes.status !== 200 && createRes.status !== 201) {
+      const isDuplicate = /already in use/i.test(createText) || createRes.status === 403;
       return new Response(JSON.stringify({
         success: false,
-        error: `Erro ao criar instância na Evolution API: ${createRes.status}`,
+        error: isDuplicate
+          ? `Já existe uma instância com o nome "${instance_name}" na Evolution API. Escolha outro nome ou remova a instância existente.`
+          : `Erro ao criar instância na Evolution API: ${createRes.status}`,
+        code: isDuplicate ? 'INSTANCE_NAME_EXISTS' : undefined,
         details: createText,
       }), {
-        status: 400,
+        status: isDuplicate ? 409 : 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
