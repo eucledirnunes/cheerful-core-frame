@@ -343,6 +343,10 @@ const SuperAdmin: React.FC = () => {
         plans={plans}
         onSaved={loadAll}
       />
+      <ResetPasswordDialog
+        company={resetCompany}
+        onOpenChange={(o) => { if (!o) setResetCompany(null); }}
+      />
     </div>
   );
 };
