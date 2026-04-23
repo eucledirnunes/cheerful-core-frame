@@ -527,6 +527,10 @@ const CompanyDialog: React.FC<{
       return;
     }
     if (!planId) { toast.error('Selecione um plano'); return; }
+    if (accessMode === 'password' && tempPassword.trim().length < 6) {
+      toast.error('A senha temporária precisa ter no mínimo 6 caracteres');
+      return;
+    }
 
     setSaving(true);
     const { data, error } = await supabase.functions.invoke('super-admin-create-company', {
@@ -538,6 +542,7 @@ const CompanyDialog: React.FC<{
         plan_id: planId,
         status: subStatus,
         trial_days: trialDays,
+        temp_password: accessMode === 'password' ? tempPassword.trim() : undefined,
       },
     });
     setSaving(false);
@@ -545,8 +550,14 @@ const CompanyDialog: React.FC<{
       toast.error(data?.error || error?.message || 'Erro ao criar empresa');
       return;
     }
-    toast.success('Empresa criada e admin convidado');
-    if (data?.invite_link) {
+    toast.success(accessMode === 'password' ? 'Empresa criada com senha temporária' : 'Empresa criada e admin convidado');
+    if (data?.created_with_password) {
+      setCreatedLogin({
+        email: adminEmail.trim(),
+        password: tempPassword.trim(),
+        loginUrl: data?.login_url || `${window.location.origin}/auth`,
+      });
+    } else if (data?.invite_link) {
       setInviteLink(data.invite_link);
     } else {
       onOpenChange(false);
