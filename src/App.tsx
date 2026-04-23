@@ -12,6 +12,7 @@ import Kanban from './components/Kanban';
 import Backup from './components/Backup';
 
 import Auth from './pages/Auth';
+import Landing from './pages/Landing';
 
 import SetPassword from './pages/SetPassword';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -61,6 +62,8 @@ const App: React.FC = () => {
             <DesignSettingsProvider>
               <Routes>
                 {/* Public Routes */}
+                <Route path="/" element={<Landing />} />
+                <Route path="/landing" element={<Landing />} />
                 <Route path="/auth" element={<Auth />} />
                 <Route path="/set-password" element={<SetPassword />} />
                 
@@ -70,7 +73,6 @@ const App: React.FC = () => {
                     <AppLayout />
                   </ProtectedRoute>
                 }>
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/pipeline" element={<Kanban />} />
                   <Route path="/chat" element={<ChatInterface />} />
@@ -83,8 +85,8 @@ const App: React.FC = () => {
                   
                 </Route>
                 
-                {/* Catch all - redirect to dashboard */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                {/* Catch all - redirect to landing */}
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               <Toaster 
                 position="top-right"
